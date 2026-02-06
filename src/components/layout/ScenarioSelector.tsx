@@ -138,6 +138,14 @@ export function ScenarioSelector({ scenarios, activeId, onSelect, onCompare, com
       >
         <button
           onClick={() => setOpen(!open)}
+          onMouseEnter={(e) => {
+            (e.currentTarget.querySelector('[data-selector-pill]') as HTMLElement | null)
+              ?.style.setProperty('border-color', '#60a5fa');
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget.querySelector('[data-selector-pill]') as HTMLElement | null)
+              ?.style.setProperty('border-color', '#475569');
+          }}
           style={{
             background: 'none',
             border: 'none',
@@ -161,34 +169,50 @@ export function ScenarioSelector({ scenarios, activeId, onSelect, onCompare, com
           >
             Scenario
           </span>
-          <span style={{ fontSize: 14, fontWeight: 700, color: '#f8fafc' }}>
-            {activeScenario?.title || activeId}
-          </span>
-          {/* Geometry icons for active scenario */}
-          <span style={{ display: 'flex', gap: 4, marginLeft: 2 }}>
-            {activeScenario?.geometries.map((g) => {
-              const geo = GEOMETRIES[g];
-              return (
-                <span
-                  key={g}
-                  title={`${geo.label}: ${geo.desc}`}
-                  style={{ fontSize: 12, color: geo.color, cursor: 'help' }}
-                >
-                  {geo.icon}
-                </span>
-              );
-            })}
-          </span>
+          {/* Dropdown pill — looks like a select control */}
           <span
+            data-selector-pill=""
             style={{
-              marginLeft: 'auto',
-              fontSize: 9,
-              color: '#475569',
-              transition: 'transform 0.15s',
-              transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 8,
+              background: '#0f172a',
+              border: `1px solid ${open ? '#60a5fa' : '#475569'}`,
+              borderRadius: 6,
+              padding: '4px 10px 4px 12px',
+              transition: 'border-color 0.15s',
             }}
           >
-            ▼
+            <span style={{ fontSize: 13, fontWeight: 700, color: '#f8fafc' }}>
+              {activeScenario?.title || activeId}
+            </span>
+            {/* Geometry icons */}
+            <span style={{ display: 'flex', gap: 3 }}>
+              {activeScenario?.geometries.map((g) => {
+                const geo = GEOMETRIES[g];
+                return (
+                  <span
+                    key={g}
+                    title={`${geo.label}: ${geo.desc}`}
+                    style={{ fontSize: 11, color: geo.color }}
+                  >
+                    {geo.icon}
+                  </span>
+                );
+              })}
+            </span>
+            {/* Chevron */}
+            <span
+              style={{
+                fontSize: 10,
+                color: '#64748b',
+                transition: 'transform 0.15s',
+                transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
+                marginLeft: 2,
+              }}
+            >
+              ▾
+            </span>
           </span>
         </button>
 
