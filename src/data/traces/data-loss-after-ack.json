@@ -1,0 +1,165 @@
+{
+  "id": "data-loss-after-ack",
+  "title": "Data Loss After Ack: The fsync Lie",
+  "description": "A replica acks a write as durable (D frontier advances) but never actually fsynced. On crash, the data vanishes — the D boundary was a lie. The commit quorum included this replica, so committed data is lost.",
+  "spec": {
+    "type": "Linearizable Register",
+    "invariant": "Committed entries are durable on a quorum",
+    "consistency_model": "linearizable",
+    "invariants": [
+      "Committed entries are durable on a quorum",
+      "D frontier must reflect actual durable storage",
+      "C ≤ min(D) over commit quorum"
+    ],
+    "observations": ["read", "write"]
+  },
+  "environment": {
+    "fault_model": "crash-recovery",
+    "storage_model": "lying fsync (buffered writes reported as durable)",
+    "network_model": "async: omission, delay, reorder",
+    "timing_model": "asynchronous"
+  },
+  "consistencyModel": "linearizable",
+  "failureModel": "crash-recovery",
+  "historyShape": "line",
+  "geometries": ["failure", "safety"],
+  "framework_refs": ["§5.5 Failure Geometry", "§3.1 Durability Boundary"],
+  "steps": [
+    {
+      "id": 0,
+      "event": "Initial state — 3 replicas, R1 is leader (epoch 1)",
+      "narration": "Normal cluster. R1 is leader. All replicas claim to have durable storage with fsync. But R3's disk controller is lying — it buffers writes in volatile RAM and reports success without actually fsyncing to disk.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [], "danger": true }
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "authority", "holder": "R1", "epoch": 1, "detail": "R1 elected leader, epoch 1", "evidence": { "quorum": ["R1", "R2", "R3"] } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "failure"
+    },
+    {
+      "id": 1,
+      "event": "R1 replicates entry A (idx=1) — R2 and R3 ack as durable",
+      "narration": "R1 appends A at idx=1 and sends it to R2 and R3. Both ack with D=1 (claiming durable). R2 genuinely fsynced. R3's ack is a LIE — data is in volatile buffer only. R1 forms commit quorum {R1, R3} and advances C to 1.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }], "danger": true }
+      },
+      "messages": [
+        { "from": "Client", "to": "R1", "label": "write(A)", "type": "request" },
+        { "from": "R1", "to": "R2", "label": "append(A, idx=1)", "type": "replication" },
+        { "from": "R1", "to": "R3", "label": "append(A, idx=1)", "type": "replication" },
+        { "from": "R2", "to": "R1", "label": "ack(D=1) [genuine fsync]", "type": "ack" },
+        { "from": "R3", "to": "R1", "label": "ack(D=1) [LYING — no fsync!]", "type": "ack" }
+      ],
+      "certificates": [
+        { "type": "commit", "holder": "R1", "epoch": 1, "detail": "Commit cert: idx=1, quorum={R1,R3} — but R3's D is a lie!", "evidence": { "quorum": ["R1", "R3"], "boundary": "C", "from": 0, "to": 1 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "safety"
+    },
+    {
+      "id": 2,
+      "event": "Client receives commit ack for A — considers it durable",
+      "narration": "R1 tells the client that A is committed. The client proceeds, trusting the durability guarantee. In reality, the commit quorum's durability relies on R3, whose data is in volatile RAM.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }], "danger": true }
+      },
+      "messages": [
+        { "from": "R1", "to": "Client", "label": "write(A) committed ✓", "type": "ack" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "safety"
+    },
+    {
+      "id": 3,
+      "event": "⚡ R1 and R3 crash simultaneously (power failure)",
+      "narration": "A power failure takes out R1 and R3. R1 had genuinely fsynced, so its data survives. But R3's 'durable' data was in volatile RAM — it's gone. On recovery, R3 comes back with an empty log. The commit quorum {R1, R3} no longer both have the data.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }], "crashed": true },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [], "crashed": true, "danger": true }
+      },
+      "messages": [],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "failure"
+    },
+    {
+      "id": 4,
+      "event": "R2 forms new quorum with recovered R3 — R3 has empty log!",
+      "narration": "R2 starts election for epoch 2. R3 recovers (with empty log due to lost volatile buffer). R2 wins with quorum {R2, R3}. R1 is still down. R2 sees its own log has A at idx=1, but it must check: is this committed? The commit frontier from R3's perspective is C=0. R2 is uncertain about the prior commit.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }], "crashed": true },
+        "R2": { "epoch": 2, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R3": { "epoch": 2, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [], "recovered": true, "danger": true }
+      },
+      "messages": [
+        { "from": "R2", "to": "R3", "label": "vote-request(epoch=2)", "type": "election" },
+        { "from": "R3", "to": "R2", "label": "vote-granted(epoch=2, log=[])", "type": "vote" }
+      ],
+      "certificates": [
+        { "type": "authority", "holder": "R2", "epoch": 2, "detail": "R2 elected leader, epoch 2. Quorum {R2,R3} — but R3 lost its data", "evidence": { "quorum": ["R2", "R3"] } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "authority"
+    },
+    {
+      "id": 5,
+      "event": "🔴 R2 overwrites idx=1 with B — committed A is lost!",
+      "narration": "R2 cannot confirm A was committed (only R1 knows, and R1 is down). If the protocol allows R2 to overwrite, a client write of B at idx=1 replaces A. When R1 eventually recovers, it finds A has been overwritten by B — a committed value was lost. The root cause: R3 lied about fsync, so the 'commit quorum' was not actually durable.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }], "crashed": true },
+        "R2": { "epoch": 2, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "B", "epoch": 2 }], "danger": true },
+        "R3": { "epoch": 2, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "B", "epoch": 2 }] }
+      },
+      "messages": [
+        { "from": "Client", "to": "R2", "label": "write(B)", "type": "request" },
+        { "from": "R2", "to": "R3", "label": "append(B, idx=1, e=2)", "type": "replication" }
+      ],
+      "certificates": [
+        { "type": "commit", "holder": "R2", "epoch": 2, "detail": "Commit cert: idx=1, val=B, quorum={R2,R3}, epoch 2 — OVERWRITES committed A!", "evidence": { "quorum": ["R2", "R3"], "boundary": "C", "from": 0, "to": 1 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": false,
+      "violation": {
+        "type": "failure",
+        "law": "D boundary must reflect actual durable state",
+        "detail": "A was committed at idx=1 with quorum {R1,R3}, but R3's D=1 was a lie (no fsync). After R3 crashed and lost data, the new leader R2 overwrote idx=1 with B. Committed value A is lost. The failure model was violated: the system assumed crash-recovery with durable storage, but R3's storage was effectively volatile.",
+        "framework_ref": "§5.5 Failure Geometry: storage assumptions",
+        "bug_class": "fsync_lie"
+      },
+      "geometry_highlight": "failure"
+    },
+    {
+      "id": 6,
+      "event": "✅ Fix: Verify fsync via checksum or use f_majority quorum",
+      "narration": "Two fixes: (1) Verify durability — each replica checksums its WAL and verifies on recovery; if checksum fails, the replica reports D=0 honestly. (2) Use f+1 majority — if you suspect f replicas might lie about durability, require 2f+1 replicas in commit quorums so that even with f liars, f+1 genuine durable copies survive. Both approaches ensure the D boundary is truthful.",
+      "replicas": {
+        "R1": { "epoch": 2, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R2": { "epoch": 2, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R3": { "epoch": 2, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] }
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "commit", "holder": "R2", "epoch": 2, "detail": "Commit cert: idx=1, val=A preserved. R3 recovered via snapshot from R2 after honest D=0 report.", "evidence": { "quorum": ["R1", "R2"], "boundary": "C", "from": 0, "to": 1 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "failure"
+    }
+  ]
+}

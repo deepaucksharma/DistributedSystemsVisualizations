@@ -1,0 +1,222 @@
+{
+  "id": "figure-8",
+  "title": "Figure-8: Epoch\u00d7Quorum Coupling Violation",
+  "description": "Shows why commit certificates must be monotone in (Epoch, Index), not just Index.",
+  "spec": {
+    "type": "Linearizable Register",
+    "invariant": "Single committed value per index",
+    "consistency_model": "linearizable",
+    "invariants": [
+      "Single committed value per index",
+      "Trunk commitment monotone in (Epoch, Index)"
+    ],
+    "observations": ["read", "write"]
+  },
+  "environment": {
+    "fault_model": "crash-recovery",
+    "storage_model": "durable fsync",
+    "network_model": "async: omission, delay, reorder",
+    "timing_model": "asynchronous"
+  },
+  "consistencyModel": "linearizable",
+  "failureModel": "crash-recovery",
+  "historyShape": "line",
+  "geometries": ["safety", "authority", "coupling", "failure"],
+  "framework_refs": ["§4.3 Coupling Law", "§2.3 History Tree"],
+  "steps": [
+    {
+      "id": 0,
+      "event": "Initial state \u2014 3 replicas, epoch 1, R1 is leader",
+      "narration": "Clean start. All boundaries at 0. R1 holds the authority certificate for epoch 1.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "authority", "holder": "R1", "epoch": 1, "detail": "R1 elected leader, epoch 1", "evidence": { "quorum": ["R1", "R2", "R3"] } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "authority"
+    },
+    {
+      "id": 1,
+      "event": "Client writes X \u2014 R1 appends at index 1",
+      "narration": "R1 appends X to its local log. E\u2081 advances to 1 but D\u2081 stays at 0 \u2014 R1 has not yet fsynced (unlike the happy path, where the leader fsyncs immediately). This buffering is what makes the crash in step 3 devastating: R1's copy of X is volatile.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "X", "epoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [
+        { "from": "Client", "to": "R1", "label": "write(X)", "type": "request" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [
+        { "replica": "R1", "boundary": "E", "from": 0, "to": 1 }
+      ],
+      "invariants_ok": true,
+      "geometry_highlight": null
+    },
+    {
+      "id": 2,
+      "event": "R1 replicates X to R2 \u2014 R2 appends and fsyncs",
+      "narration": "R2 receives X, appends it, fsyncs to disk. Both E\u2082 and D\u2082 advance to 1. Now 2 of 3 replicas have X durably \u2014 a majority. But R1 hasn't committed yet.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "X", "epoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "X", "epoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [
+        { "from": "R1", "to": "R2", "label": "append(X, idx=1, e=1)", "type": "replication" },
+        { "from": "R2", "to": "R1", "label": "ack(fsync, idx=1)", "type": "ack" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [
+        { "replica": "R2", "boundary": "E", "from": 0, "to": 1 },
+        { "replica": "R2", "boundary": "D", "from": 0, "to": 1 }
+      ],
+      "invariants_ok": true,
+      "geometry_highlight": "safety"
+    },
+    {
+      "id": 3,
+      "event": "\u26a1 R1 crashes before committing X",
+      "narration": "R1 dies. X is on a majority (R1 memory + R2 disk) but R1 never advanced C. X is NOT committed \u2014 it's wet cement on a majority. This is the critical setup for Figure-8.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "X", "epoch": 1 }], "crashed": true },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "X", "epoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "failure"
+    },
+    {
+      "id": 4,
+      "event": "R3 elected leader in epoch 2 (R2 + R3 form majority)",
+      "narration": "R3 wins election with votes from R2 and R3. But R3's log is empty \u2014 it doesn't have X. In a naive protocol, R3 might not pick up X from R2's log. The authority certificate transfers to R3.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "X", "epoch": 1 }], "crashed": true },
+        "R2": { "epoch": 2, "leader": false, "T": 0, "D": 1, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "X", "epoch": 1 }] },
+        "R3": { "epoch": 2, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "authority", "holder": "R3", "epoch": 2, "detail": "R3 elected leader, epoch 2, votes: {R2, R3}", "evidence": { "quorum": ["R2", "R3"] } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "authority"
+    },
+    {
+      "id": 5,
+      "event": "Client writes Y \u2014 R3 appends Y at index 1, replicates to R2",
+      "narration": "R3 overwrites index 1 with Y (epoch 2). R2 truncates X and accepts Y \u2014 the old branch is pruned. Now the majority has Y at index 1, not X.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "X", "epoch": 1 }], "crashed": true },
+        "R2": { "epoch": 2, "leader": false, "T": 0, "D": 1, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "Y", "epoch": 2 }] },
+        "R3": { "epoch": 2, "leader": true, "T": 0, "D": 1, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "Y", "epoch": 2 }] }
+      },
+      "messages": [
+        { "from": "Client", "to": "R3", "label": "write(Y)", "type": "request" },
+        { "from": "R3", "to": "R2", "label": "append(Y, idx=1, e=2)", "type": "replication" },
+        { "from": "R2", "to": "R3", "label": "ack(truncate+fsync)", "type": "ack" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [
+        { "replica": "R3", "boundary": "E", "from": 0, "to": 1 },
+        { "replica": "R3", "boundary": "D", "from": 0, "to": 1 }
+      ],
+      "invariants_ok": true,
+      "geometry_highlight": "coupling"
+    },
+    {
+      "id": 6,
+      "event": "R3 commits Y at index 1 \u2014 C advances to 1",
+      "narration": "R3 has a valid commit certificate: majority (R2+R3) in epoch 2 with Y at index 1. C moves to 1. Y is now on the committed trunk.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "X", "epoch": 1 }], "crashed": true },
+        "R2": { "epoch": 2, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "Y", "epoch": 2 }] },
+        "R3": { "epoch": 2, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "Y", "epoch": 2 }] }
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "commit", "holder": "R3", "epoch": 2, "detail": "Commit cert: idx=1, quorum={R2,R3}, epoch=2", "evidence": { "quorum": ["R2", "R3"], "boundary": "C", "from": 0, "to": 1 } }
+      ],
+      "boundaries_moved": [
+        { "replica": "R2", "boundary": "C", "from": 0, "to": 1 },
+        { "replica": "R3", "boundary": "C", "from": 0, "to": 1 },
+        { "replica": "R2", "boundary": "A", "from": 0, "to": 1 },
+        { "replica": "R3", "boundary": "A", "from": 0, "to": 1 }
+      ],
+      "invariants_ok": true,
+      "geometry_highlight": "safety"
+    },
+    {
+      "id": 7,
+      "event": "\u26a1 R1 recovers, wins epoch 3 election with R2",
+      "narration": "R1 comes back with X still on disk. Gets elected in epoch 3. A NAIVE protocol might let R1 see 'X is on a majority of epoch-1 logs' and try to commit X. This is the Figure-8 danger zone.",
+      "replicas": {
+        "R1": { "epoch": 3, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "X", "epoch": 1 }], "recovered": true },
+        "R2": { "epoch": 3, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "Y", "epoch": 2 }] },
+        "R3": { "epoch": 2, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "Y", "epoch": 2 }], "partitioned": true }
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "authority", "holder": "R1", "epoch": 3, "detail": "R1 elected, epoch 3, votes: {R1, R2}", "evidence": { "quorum": ["R1", "R2"] } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "coupling"
+    },
+    {
+      "id": 8,
+      "event": "\ud83d\udd34 DANGER: Naive commit of X would violate trunk monotonicity",
+      "narration": "If R1 commits X at (epoch=1, idx=1), it contradicts Y at (epoch=2, idx=1) which is ALREADY on the committed trunk. This is a phantom commit \u2014 the coupling law is violated. The fix: R1 must adopt R2's log (which has Y from a higher epoch) before operating.",
+      "replicas": {
+        "R1": { "epoch": 3, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "X", "epoch": 1 }], "danger": true },
+        "R2": { "epoch": 3, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "Y", "epoch": 2 }] },
+        "R3": { "epoch": 2, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "Y", "epoch": 2 }], "partitioned": true }
+      },
+      "messages": [],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": false,
+      "violation": {
+        "type": "coupling",
+        "law": "Trunk monotonicity in (Epoch, Index)",
+        "detail": "X at (e=1, idx=1) conflicts with committed Y at (e=2, idx=1). Quorum intersection exists (R2 has Y) but naive index-only counting ignores epoch ordering.",
+        "framework_ref": "\u00a74.3 Coupling Law: sets \u00d7 epochs"
+      },
+      "geometry_highlight": "coupling"
+    },
+    {
+      "id": 9,
+      "event": "\u2705 Correct: R1 adopts R2's higher-epoch log, truncates X",
+      "narration": "The protocol's fix: during election, R1 discovers R2 has an entry at idx=1 from a higher epoch (2 > 1). R1 truncates its stale branch and adopts Y. The committed trunk is preserved. This is the coupling law in action.",
+      "replicas": {
+        "R1": { "epoch": 3, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "Y", "epoch": 2 }] },
+        "R2": { "epoch": 3, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "Y", "epoch": 2 }] },
+        "R3": { "epoch": 2, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "Y", "epoch": 2 }], "partitioned": true }
+      },
+      "messages": [
+        { "from": "R2", "to": "R1", "label": "log: Y@(e=2, idx=1)", "type": "replication" }
+      ],
+      "certificates": [
+        { "type": "commit", "holder": "R1", "epoch": 3, "detail": "R1 adopts committed trunk via R2. Trunk monotonicity preserved." }
+      ],
+      "boundaries_moved": [
+        { "replica": "R1", "boundary": "C", "from": 0, "to": 1 },
+        { "replica": "R1", "boundary": "A", "from": 0, "to": 1 },
+        { "replica": "R1", "boundary": "D", "from": 0, "to": 1 }
+      ],
+      "invariants_ok": true,
+      "geometry_highlight": "coupling"
+    }
+  ]
+}

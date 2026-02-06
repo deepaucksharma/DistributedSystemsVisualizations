@@ -1,0 +1,243 @@
+{
+  "id": "crdt-convergence",
+  "title": "CRDT Convergence: Coordination-Free Merge",
+  "description": "A Grow-Only Set (G-Set) CRDT converges across partitioned replicas without consensus. Concurrent adds merge deterministically via set union. This is CALM in action: monotone operations need no coordination.",
+  "spec": {
+    "type": "G-Set CRDT",
+    "invariant": "Set only grows; all replicas converge to same set",
+    "consistency_model": "eventual",
+    "invariants": [
+      "Monotonicity: elements are never removed",
+      "Convergence: all replicas eventually hold the same set",
+      "Commutativity: merge order does not matter"
+    ],
+    "observations": ["read", "write"]
+  },
+  "environment": {
+    "fault_model": "crash-recovery",
+    "storage_model": "durable",
+    "network_model": "async: omission, delay, reorder, partition",
+    "timing_model": "asynchronous"
+  },
+  "consistencyModel": "eventual",
+  "failureModel": "crash-recovery",
+  "historyShape": "dag",
+  "geometries": ["causality", "observation"],
+  "framework_refs": ["§5.3 CALM Theorem", "§2.1 History Shape", "§2.2 Partial Order"],
+  "steps": [
+    {
+      "id": 0,
+      "event": "Initial state — 3 replicas, all with empty G-Sets",
+      "narration": "Three replicas (R1, R2, R3) each hold an empty Grow-Only Set. There is no leader, no epochs, no authority — all replicas are equal peers. History is a DAG (partial order), not a line (total order). Each replica can accept writes independently.",
+      "replicas": {
+        "R1": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": [], "vectorClock": { "R1": 0, "R2": 0, "R3": 0 } }
+        },
+        "R2": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": [], "vectorClock": { "R1": 0, "R2": 0, "R3": 0 } }
+        },
+        "R3": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": [], "vectorClock": { "R1": 0, "R2": 0, "R3": 0 } }
+        }
+      },
+      "messages": [],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "causality"
+    },
+    {
+      "id": 1,
+      "event": "R1 adds 'apple' locally — vector clock advances",
+      "narration": "A client writes 'apple' to R1. R1 adds it to its local G-Set and increments its vector clock entry. No coordination needed — this is a local operation. R1 gossips the update to R2.",
+      "replicas": {
+        "R1": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": ["apple"], "vectorClock": { "R1": 1, "R2": 0, "R3": 0 } }
+        },
+        "R2": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": [], "vectorClock": { "R1": 0, "R2": 0, "R3": 0 } }
+        },
+        "R3": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": [], "vectorClock": { "R1": 0, "R2": 0, "R3": 0 } }
+        }
+      },
+      "messages": [
+        { "from": "Client", "to": "R1", "label": "add(apple)", "type": "request" },
+        { "from": "R1", "to": "R2", "label": "gossip({apple}, VC=[1,0,0])", "type": "replication" }
+      ],
+      "certificates": [],
+      "observations": [
+        {
+          "type": "clientWrite",
+          "actor": "Client",
+          "targetReplica": "R1",
+          "result": "ack (local)",
+          "consistency": "eventual",
+          "detail": "Write accepted locally — no quorum needed. Eventual delivery to all replicas."
+        }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "causality"
+    },
+    {
+      "id": 2,
+      "event": "R2 receives gossip — merges 'apple'. R3 adds 'banana' concurrently.",
+      "narration": "R2 receives R1's gossip and merges: union({}, {apple}) = {apple}. R2 updates its vector clock to reflect knowledge of R1's state. Meanwhile, R3 independently adds 'banana' — this is a concurrent operation (R3 doesn't know about 'apple' yet). The two operations are causally independent: R1's add || R3's add.",
+      "replicas": {
+        "R1": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": ["apple"], "vectorClock": { "R1": 1, "R2": 0, "R3": 0 } }
+        },
+        "R2": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": ["apple"], "vectorClock": { "R1": 1, "R2": 0, "R3": 0 } }
+        },
+        "R3": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": ["banana"], "vectorClock": { "R1": 0, "R2": 0, "R3": 1 } }
+        }
+      },
+      "messages": [
+        { "from": "Client", "to": "R3", "label": "add(banana)", "type": "request" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "causality"
+    },
+    {
+      "id": 3,
+      "event": "Network partition: R3 isolated. R1 adds 'cherry'.",
+      "narration": "A network partition isolates R3 from R1 and R2. R1 adds 'cherry' and gossips to R2. R3 cannot receive this update. The system now has divergent states: {apple, cherry} on R1/R2 vs {banana} on R3. This is fine — the G-Set invariant (monotonicity) guarantees these will merge correctly later.",
+      "replicas": {
+        "R1": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": ["apple", "cherry"], "vectorClock": { "R1": 2, "R2": 0, "R3": 0 } }
+        },
+        "R2": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": ["apple", "cherry"], "vectorClock": { "R1": 2, "R2": 0, "R3": 0 } }
+        },
+        "R3": {
+          "epoch": 0, "leader": false, "partitioned": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": ["banana"], "vectorClock": { "R1": 0, "R2": 0, "R3": 1 } }
+        }
+      },
+      "messages": [
+        { "from": "Client", "to": "R1", "label": "add(cherry)", "type": "request" },
+        { "from": "R1", "to": "R2", "label": "gossip({apple,cherry}, VC=[2,0,0])", "type": "replication" },
+        { "from": "R1", "to": "R3", "label": "gossip (DROPPED — partition)", "type": "replication", "delivered": false }
+      ],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "causality"
+    },
+    {
+      "id": 4,
+      "event": "R3 adds 'date' while partitioned — still accepts writes!",
+      "narration": "Even while partitioned, R3 can still accept writes locally. R3 adds 'date'. This is a key property of CRDTs: availability during partitions (AP in CAP). Consensus-based systems (CP) would reject writes on the minority side. Here, both sides make progress independently.",
+      "replicas": {
+        "R1": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": ["apple", "cherry"], "vectorClock": { "R1": 2, "R2": 0, "R3": 0 } }
+        },
+        "R2": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": ["apple", "cherry"], "vectorClock": { "R1": 2, "R2": 0, "R3": 0 } }
+        },
+        "R3": {
+          "epoch": 0, "leader": false, "partitioned": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": ["banana", "date"], "vectorClock": { "R1": 0, "R2": 0, "R3": 2 } }
+        }
+      },
+      "messages": [
+        { "from": "Client", "to": "R3", "label": "add(date)", "type": "request" }
+      ],
+      "certificates": [],
+      "observations": [
+        {
+          "type": "clientRead",
+          "actor": "Client",
+          "targetReplica": "R3",
+          "result": "{banana, date}",
+          "consistency": "eventual",
+          "detail": "Client reads from R3 — sees only R3's local state. Missing apple, cherry. This is expected under eventual consistency."
+        }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "observation"
+    },
+    {
+      "id": 5,
+      "event": "Partition heals — R1 and R3 exchange gossip and merge",
+      "narration": "The partition heals. R1 sends its state {apple, cherry} to R3. R3 sends its state {banana, date} to R1. Each replica computes the merge: union({apple, cherry}, {banana, date}) = {apple, banana, cherry, date}. The merge is deterministic (set union is commutative, associative, idempotent) — no coordination needed!",
+      "replicas": {
+        "R1": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": ["apple", "banana", "cherry", "date"], "vectorClock": { "R1": 2, "R2": 0, "R3": 2 } }
+        },
+        "R2": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": ["apple", "cherry"], "vectorClock": { "R1": 2, "R2": 0, "R3": 0 } }
+        },
+        "R3": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": ["apple", "banana", "cherry", "date"], "vectorClock": { "R1": 2, "R2": 0, "R3": 2 } }
+        }
+      },
+      "messages": [
+        { "from": "R1", "to": "R3", "label": "gossip({apple,cherry}, VC=[2,0,0])", "type": "replication" },
+        { "from": "R3", "to": "R1", "label": "gossip({banana,date}, VC=[0,0,2])", "type": "replication" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "causality"
+    },
+    {
+      "id": 6,
+      "event": "R2 receives gossip — all replicas converged to {apple, banana, cherry, date}",
+      "narration": "R1 gossips the full merged state to R2. R2 merges and arrives at the same set. All three replicas now hold {apple, banana, cherry, date} with identical vector clocks. Convergence achieved without any consensus protocol, elections, or quorum certificates. This is the CALM theorem in practice: 'Growing a set is a monotone operation — new facts never contradict old facts — so no coordination is needed.'",
+      "replicas": {
+        "R1": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": ["apple", "banana", "cherry", "date"], "vectorClock": { "R1": 2, "R2": 0, "R3": 2 } }
+        },
+        "R2": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": ["apple", "banana", "cherry", "date"], "vectorClock": { "R1": 2, "R2": 0, "R3": 2 } }
+        },
+        "R3": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "addSet": ["apple", "banana", "cherry", "date"], "vectorClock": { "R1": 2, "R2": 0, "R3": 2 } }
+        }
+      },
+      "messages": [
+        { "from": "R1", "to": "R2", "label": "gossip(full state, VC=[2,0,2])", "type": "replication" }
+      ],
+      "certificates": [],
+      "observations": [
+        {
+          "type": "clientRead",
+          "actor": "Client",
+          "targetReplica": "R2",
+          "result": "{apple, banana, cherry, date}",
+          "consistency": "eventual",
+          "detail": "All replicas converged. Any client reading any replica sees the same set. CALM: monotone invariant + gossip = coordination-free convergence."
+        }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "causality"
+    }
+  ]
+}

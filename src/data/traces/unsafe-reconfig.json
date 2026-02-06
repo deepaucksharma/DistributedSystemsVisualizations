@@ -1,0 +1,174 @@
+{
+  "id": "unsafe-reconfig",
+  "title": "Unsafe Reconfiguration: Disjoint Quorum Split Brain",
+  "description": "A direct config swap from {R1,R2,R3} to {R4,R5,R6} creates a window where both configs can independently form quorums — split brain across configurations.",
+  "spec": {
+    "type": "Linearizable Register",
+    "invariant": "Single committed value per index",
+    "consistency_model": "linearizable",
+    "invariants": [
+      "Single committed value per index",
+      "Quorums across config transitions must intersect"
+    ],
+    "observations": ["read", "write"]
+  },
+  "environment": {
+    "fault_model": "crash-recovery",
+    "storage_model": "durable fsync",
+    "network_model": "async: omission, delay, reorder",
+    "timing_model": "asynchronous"
+  },
+  "consistencyModel": "linearizable",
+  "failureModel": "crash-recovery",
+  "historyShape": "line",
+  "geometries": ["membership", "authority", "safety"],
+  "framework_refs": ["§5.2 Membership Geometry", "§7.2 reconfig_split_brain"],
+  "hasControlPlane": true,
+  "steps": [
+    {
+      "id": 0,
+      "event": "Initial state — config epoch 1: {R1, R2, R3}, R1 is leader",
+      "narration": "Cluster running with 3 replicas. Config epoch 1. Quorum is 2. Everything is normal.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "configEpoch": 1, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R2": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R3": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "controlPlane": {
+        "configs": [{ "epoch": 1, "members": ["R1", "R2", "R3"] }],
+        "currentConfigEpoch": 1
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "authority", "holder": "R1", "epoch": 1, "detail": "R1 elected leader, epoch 1, config 1", "evidence": { "quorum": ["R1", "R2", "R3"], "configEpoch": 1 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "membership"
+    },
+    {
+      "id": 1,
+      "event": "R1 commits value A at idx=1",
+      "narration": "Normal operation. R1 commits A with quorum {R1, R2} under config epoch 1.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "configEpoch": 1, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 }] }
+      },
+      "controlPlane": {
+        "configs": [{ "epoch": 1, "members": ["R1", "R2", "R3"] }],
+        "currentConfigEpoch": 1
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "commit", "holder": "R1", "epoch": 1, "detail": "Commit cert: idx=1, quorum={R1,R2}, config 1", "evidence": { "quorum": ["R1", "R2"], "boundary": "C", "from": 0, "to": 1, "configEpoch": 1 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "safety"
+    },
+    {
+      "id": 2,
+      "event": "🔴 Admin initiates DIRECT swap to config 2: {R4, R5, R6}",
+      "narration": "Admin decides to migrate to entirely new hardware: {R4, R5, R6}. A naive approach applies config 2 immediately without joint consensus. This is the danger zone: {R1,R2,R3} and {R4,R5,R6} are completely disjoint — no quorum intersection.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "configEpoch": 1, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 }] },
+        "R4": { "epoch": 1, "leader": false, "configEpoch": 2, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [], "danger": true },
+        "R5": { "epoch": 1, "leader": false, "configEpoch": 2, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R6": { "epoch": 1, "leader": false, "configEpoch": 2, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "controlPlane": {
+        "configs": [
+          { "epoch": 1, "members": ["R1", "R2", "R3"] },
+          { "epoch": 2, "members": ["R4", "R5", "R6"] }
+        ],
+        "currentConfigEpoch": 2,
+        "notes": "DANGER: Direct swap — no joint consensus. Configs are disjoint!"
+      },
+      "messages": [
+        { "from": "Admin", "to": "R4", "label": "config 2: {R4,R5,R6}", "type": "reconfig" },
+        { "from": "Admin", "to": "R5", "label": "config 2: {R4,R5,R6}", "type": "reconfig" },
+        { "from": "Admin", "to": "R6", "label": "config 2: {R4,R5,R6}", "type": "reconfig" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "membership"
+    },
+    {
+      "id": 3,
+      "event": "R4 wins election in config 2 — new leader with empty log!",
+      "narration": "R4 forms a quorum {R4, R5} under config 2 and becomes leader. But none of them have entry A at idx=1. The old config's committed data is invisible to the new config because the quorums are disjoint.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "configEpoch": 1, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 }] },
+        "R4": { "epoch": 2, "leader": true, "configEpoch": 2, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [], "danger": true },
+        "R5": { "epoch": 2, "leader": false, "configEpoch": 2, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R6": { "epoch": 2, "leader": false, "configEpoch": 2, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "controlPlane": {
+        "configs": [
+          { "epoch": 1, "members": ["R1", "R2", "R3"] },
+          { "epoch": 2, "members": ["R4", "R5", "R6"] }
+        ],
+        "currentConfigEpoch": 2,
+        "notes": "TWO leaders: R1 (config 1) and R4 (config 2)"
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "authority", "holder": "R4", "epoch": 2, "detail": "R4 elected leader, epoch 2, config 2 — valid within config 2 but disjoint from config 1!", "evidence": { "quorum": ["R4", "R5"], "configEpoch": 2 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": false,
+      "violation": {
+        "type": "membership",
+        "law": "Quorums across config transitions must intersect",
+        "detail": "R4 holds authority in config 2 while R1 holds authority in config 1. The quorums {R1,R2} and {R4,R5} are completely disjoint — no overlap means committed data can be lost.",
+        "framework_ref": "§5.2 Membership Geometry: config epochs",
+        "bug_class": "reconfig_split_brain"
+      },
+      "geometry_highlight": "membership"
+    },
+    {
+      "id": 4,
+      "event": "R4 commits value B at idx=1 — CONFLICTS with committed A!",
+      "narration": "R4 writes B at idx=1 and commits it with quorum {R4, R5} under config 2. But A was already committed at idx=1 under config 1! Two different committed values at the same position — linearizability is destroyed.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "configEpoch": 1, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 }] },
+        "R4": { "epoch": 2, "leader": true, "configEpoch": 2, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "B", "epoch": 2, "configEpoch": 2 }], "danger": true },
+        "R5": { "epoch": 2, "leader": false, "configEpoch": 2, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "B", "epoch": 2, "configEpoch": 2 }] },
+        "R6": { "epoch": 2, "leader": false, "configEpoch": 2, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "B", "epoch": 2, "configEpoch": 2 }] }
+      },
+      "controlPlane": {
+        "configs": [
+          { "epoch": 1, "members": ["R1", "R2", "R3"] },
+          { "epoch": 2, "members": ["R4", "R5", "R6"] }
+        ],
+        "currentConfigEpoch": 2
+      },
+      "messages": [
+        { "from": "Client", "to": "R4", "label": "write(B)", "type": "request" },
+        { "from": "R4", "to": "R5", "label": "append(B, idx=1, cfg=2)", "type": "replication" },
+        { "from": "R4", "to": "R6", "label": "append(B, idx=1, cfg=2)", "type": "replication" }
+      ],
+      "certificates": [
+        { "type": "commit", "holder": "R4", "epoch": 2, "detail": "Commit cert: idx=1, val=B, quorum={R4,R5}, config 2 — CONFLICTS with A!", "evidence": { "quorum": ["R4", "R5"], "boundary": "C", "from": 0, "to": 1, "configEpoch": 2 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": false,
+      "violation": {
+        "type": "membership",
+        "law": "Config transitions must preserve committed trunk",
+        "detail": "A is committed at idx=1 (config 1) AND B is committed at idx=1 (config 2). Disjoint configs produced divergent trunks. The fix: joint consensus (see safe-reconfig scenario).",
+        "framework_ref": "§5.2 Membership Geometry: config epochs",
+        "bug_class": "reconfig_split_brain"
+      },
+      "geometry_highlight": "membership"
+    }
+  ]
+}

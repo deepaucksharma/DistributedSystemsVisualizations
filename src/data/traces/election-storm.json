@@ -1,0 +1,153 @@
+{
+  "id": "election-storm",
+  "title": "Election Storm: Liveness Failure",
+  "description": "Multiple candidates keep interrupting each other's elections. Epochs increase but no leader holds long enough to commit. Safety is preserved but liveness fails — FLP impossibility in action.",
+  "spec": {
+    "type": "Linearizable Register",
+    "invariant": "Single committed value per index",
+    "consistency_model": "linearizable",
+    "invariants": [
+      "Single committed value per index",
+      "Safety is unconditional; liveness requires timing assumptions"
+    ],
+    "observations": ["read", "write"]
+  },
+  "environment": {
+    "fault_model": "crash-recovery",
+    "storage_model": "durable fsync",
+    "network_model": "async: omission, delay, reorder",
+    "timing_model": "asynchronous"
+  },
+  "consistencyModel": "linearizable",
+  "failureModel": "crash-recovery",
+  "historyShape": "line",
+  "geometries": ["liveness", "authority"],
+  "framework_refs": ["§6.1 FLP Impossibility", "§6.2 Failure Detectors"],
+  "steps": [
+    {
+      "id": 0,
+      "event": "R1 is leader (epoch 1), client waiting to write V",
+      "narration": "R1 holds the authority certificate for epoch 1. A client wants to write V. R1 starts replicating.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "V", "epoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [
+        { "from": "Client", "to": "R1", "label": "write(V)", "type": "request" },
+        { "from": "R1", "to": "R2", "label": "append(V, idx=1, e=1)", "type": "replication" },
+        { "from": "R1", "to": "R3", "label": "append(V, idx=1, e=1)", "type": "replication" }
+      ],
+      "certificates": [
+        { "type": "authority", "holder": "R1", "epoch": 1, "detail": "R1 holds authority for epoch 1", "evidence": { "quorum": ["R1", "R2", "R3"] } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "authority"
+    },
+    {
+      "id": 1,
+      "event": "R2's failure detector triggers — R2 thinks R1 is dead, starts epoch 2",
+      "narration": "R2's aggressive failure detector incorrectly suspects R1 has crashed (false positive). R2 starts an election for epoch 2. R2 sends vote requests to R1 and R3.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "V", "epoch": 1 }] },
+        "R2": { "epoch": 2, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [
+        { "from": "R2", "to": "R1", "label": "vote-request(epoch=2)", "type": "election" },
+        { "from": "R2", "to": "R3", "label": "vote-request(epoch=2)", "type": "election" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "liveness"
+    },
+    {
+      "id": 2,
+      "event": "R1 steps down on seeing epoch 2 — V never committed",
+      "narration": "R1 receives the vote request for epoch 2 > 1. It must step down as leader. V was never committed (no majority ack). R2 wins epoch 2 with votes from R2 and R3. But before R2 can do anything useful...",
+      "replicas": {
+        "R1": { "epoch": 2, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "V", "epoch": 1 }] },
+        "R2": { "epoch": 2, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R3": { "epoch": 2, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [
+        { "from": "R3", "to": "R2", "label": "vote-granted(epoch=2)", "type": "vote" }
+      ],
+      "certificates": [
+        { "type": "authority", "holder": "R2", "epoch": 2, "detail": "R2 elected leader, epoch 2", "evidence": { "quorum": ["R2", "R3"] } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "authority"
+    },
+    {
+      "id": 3,
+      "event": "R3's failure detector triggers — R3 thinks R2 is dead, starts epoch 3",
+      "narration": "Before R2 can commit anything, R3's failure detector suspects R2 (another false positive). R3 starts election for epoch 3. This disrupts R2's ability to form quorums.",
+      "replicas": {
+        "R1": { "epoch": 2, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "V", "epoch": 1 }] },
+        "R2": { "epoch": 2, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R3": { "epoch": 3, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [
+        { "from": "R3", "to": "R1", "label": "vote-request(epoch=3)", "type": "election" },
+        { "from": "R3", "to": "R2", "label": "vote-request(epoch=3)", "type": "election" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "liveness"
+    },
+    {
+      "id": 4,
+      "event": "R2 steps down — R3 wins epoch 3 but R1 starts epoch 4!",
+      "narration": "R2 steps down. R3 becomes leader (epoch 3). But now R1's failure detector suspects R3, and R1 starts election for epoch 4. The cycle continues — no leader holds long enough to replicate + commit.",
+      "replicas": {
+        "R1": { "epoch": 4, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "V", "epoch": 1 }] },
+        "R2": { "epoch": 3, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R3": { "epoch": 3, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [
+        { "from": "R1", "to": "R2", "label": "vote-request(epoch=4)", "type": "election" },
+        { "from": "R1", "to": "R3", "label": "vote-request(epoch=4)", "type": "election" }
+      ],
+      "certificates": [
+        { "type": "authority", "holder": "R3", "epoch": 3, "detail": "R3 briefly leader epoch 3 — immediately disrupted by R1's epoch 4", "evidence": { "quorum": ["R1", "R3"] } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "violation": {
+        "type": "liveness",
+        "law": "FLP: no deterministic async consensus can guarantee both safety and liveness",
+        "detail": "Epochs 1→2→3→4 with no commits. Each leader is deposed before it can replicate. Safety is preserved (C=0 everywhere, no phantom commits) but the client's write V is stuck forever.",
+        "framework_ref": "§6.1 FLP Impossibility",
+        "bug_class": "election_storm"
+      },
+      "geometry_highlight": "liveness"
+    },
+    {
+      "id": 5,
+      "event": "Epoch 5, 6... still no progress. C=0 everywhere.",
+      "narration": "The storm continues. Epochs keep incrementing. No entry is ever committed. The system is safe (no wrong answers) but useless (no answers at all). This is FLP in practice: in a purely asynchronous system with unreliable failure detectors, liveness cannot be guaranteed.",
+      "replicas": {
+        "R1": { "epoch": 6, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "V", "epoch": 1 }] },
+        "R2": { "epoch": 6, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R3": { "epoch": 5, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "violation": {
+        "type": "liveness",
+        "law": "Progress requires eventual synchrony or randomization",
+        "detail": "After 6 epochs, C=0 on all replicas. Client write V has been pending since epoch 1. The fix: use randomized election timeouts (Raft), or pre-vote protocol to avoid disrupting existing leaders.",
+        "framework_ref": "§6.2 Failure Detectors and Progress",
+        "bug_class": "election_storm"
+      },
+      "geometry_highlight": "liveness"
+    }
+  ]
+}

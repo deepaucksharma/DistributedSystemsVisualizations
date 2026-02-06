@@ -1,0 +1,146 @@
+{
+  "id": "happy-path",
+  "title": "Happy Path: Write \u2192 Replicate \u2192 Commit \u2192 Read",
+  "description": "The baseline scenario: a clean write committed through quorum replication, then read back. No failures, no violations.",
+  "spec": {
+    "type": "Linearizable Register",
+    "invariant": "Single committed value per index",
+    "consistency_model": "linearizable",
+    "invariants": [
+      "Single committed value per index",
+      "Reads reflect the most recent committed write"
+    ],
+    "observations": ["read", "write"]
+  },
+  "environment": {
+    "fault_model": "crash-recovery",
+    "storage_model": "durable fsync",
+    "network_model": "async: omission, delay, reorder",
+    "timing_model": "asynchronous"
+  },
+  "consistencyModel": "linearizable",
+  "failureModel": "crash-recovery",
+  "historyShape": "line",
+  "geometries": ["safety", "observation"],
+  "framework_refs": ["\u00a72.1-2.5 History & Boundaries", "\u00a73.2 Certificates", "\u00a74.1 Safety", "\u00a74.5 Observation"],
+  "steps": [
+    {
+      "id": 0,
+      "event": "Initial state \u2014 3 replicas, epoch 1, R1 is leader",
+      "narration": "Clean cluster. All boundaries at 0. R1 holds the authority certificate for epoch 1.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "authority", "holder": "R1", "epoch": 1, "detail": "R1 elected leader for epoch 1", "evidence": { "quorum": ["R1", "R2", "R3"] } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "authority"
+    },
+    {
+      "id": 1,
+      "event": "Client writes V \u2014 R1 appends at index 1, fsyncs",
+      "narration": "R1 appends V to its local log and fsyncs. E\u2081 and D\u2081 advance to 1. Entry is wet cement \u2014 not yet replicated to a majority.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "V", "epoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [
+        { "from": "Client", "to": "R1", "label": "write(V)", "type": "request" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [
+        { "replica": "R1", "boundary": "E", "from": 0, "to": 1 },
+        { "replica": "R1", "boundary": "D", "from": 0, "to": 1 }
+      ],
+      "invariants_ok": true,
+      "geometry_highlight": null
+    },
+    {
+      "id": 2,
+      "event": "R1 replicates V to R2 and R3 \u2014 both fsync",
+      "narration": "R2 and R3 receive V, append, and fsync. Now all 3 replicas have V durably. A majority (in fact, all) have the entry. R1 can now form a commit certificate.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "V", "epoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "V", "epoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "V", "epoch": 1 }] }
+      },
+      "messages": [
+        { "from": "R1", "to": "R2", "label": "append(V, idx=1, e=1)", "type": "replication" },
+        { "from": "R1", "to": "R3", "label": "append(V, idx=1, e=1)", "type": "replication" },
+        { "from": "R2", "to": "R1", "label": "ack(fsync, idx=1)", "type": "ack" },
+        { "from": "R3", "to": "R1", "label": "ack(fsync, idx=1)", "type": "ack" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [
+        { "replica": "R2", "boundary": "E", "from": 0, "to": 1 },
+        { "replica": "R2", "boundary": "D", "from": 0, "to": 1 },
+        { "replica": "R3", "boundary": "E", "from": 0, "to": 1 },
+        { "replica": "R3", "boundary": "D", "from": 0, "to": 1 }
+      ],
+      "invariants_ok": true,
+      "geometry_highlight": "safety"
+    },
+    {
+      "id": 3,
+      "event": "R1 commits V \u2014 C advances to 1, all replicas apply",
+      "narration": "R1 forms a commit certificate (majority durable) and advances C to 1. V is now on the committed trunk. All replicas apply V to their state machines: A advances to 1. The write is acknowledged to the client.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "V", "epoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "V", "epoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "V", "epoch": 1 }] }
+      },
+      "messages": [
+        { "from": "R1", "to": "Client", "label": "ack(write V committed)", "type": "ack" }
+      ],
+      "certificates": [
+        { "type": "commit", "holder": "R1", "epoch": 1, "detail": "Commit cert: idx=1, quorum={R1,R2,R3}, epoch=1", "evidence": { "quorum": ["R1", "R2", "R3"], "boundary": "C", "from": 0, "to": 1 } }
+      ],
+      "boundaries_moved": [
+        { "replica": "R1", "boundary": "C", "from": 0, "to": 1 },
+        { "replica": "R1", "boundary": "A", "from": 0, "to": 1 },
+        { "replica": "R2", "boundary": "C", "from": 0, "to": 1 },
+        { "replica": "R2", "boundary": "A", "from": 0, "to": 1 },
+        { "replica": "R3", "boundary": "C", "from": 0, "to": 1 },
+        { "replica": "R3", "boundary": "A", "from": 0, "to": 1 }
+      ],
+      "invariants_ok": true,
+      "geometry_highlight": "safety"
+    },
+    {
+      "id": 4,
+      "event": "Client reads from leader \u2014 linearizable read returns V",
+      "narration": "Client sends a read to R1 (the leader). R1 checks its commit frontier C=1, and returns V. This is a linearizable read: it reflects the most recent committed write.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "V", "epoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "V", "epoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "V", "epoch": 1 }] }
+      },
+      "messages": [
+        { "from": "Client", "to": "R1", "label": "read()", "type": "request" },
+        { "from": "R1", "to": "Client", "label": "V (committed at C=1)", "type": "ack" }
+      ],
+      "certificates": [
+        { "type": "read", "holder": "R1", "epoch": 1, "detail": "Read cert: leader R1 at C=1, epoch=1. Linearizable.", "evidence": { "quorum": ["R1"], "boundary": "C", "from": 0, "to": 1 } }
+      ],
+      "observations": [
+        {
+          "type": "clientRead",
+          "actor": "Client",
+          "targetReplica": "R1",
+          "result": "V",
+          "consistency": "linearizable",
+          "detail": "Read served from leader R1 at C=1"
+        }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "observation"
+    }
+  ]
+}

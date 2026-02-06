@@ -1,0 +1,231 @@
+{
+  "id": "safe-reconfig",
+  "title": "Safe Reconfiguration: Joint Consensus",
+  "description": "The correct approach to reconfiguration: transition through a joint config where quorums must include majorities from BOTH old and new configs. This guarantees overlap and prevents split brain.",
+  "spec": {
+    "type": "Linearizable Register",
+    "invariant": "Single committed value per index",
+    "consistency_model": "linearizable",
+    "invariants": [
+      "Single committed value per index",
+      "Joint quorum: majority(old) ∩ majority(new)",
+      "Config epochs monotonically increase"
+    ],
+    "observations": ["read", "write"]
+  },
+  "environment": {
+    "fault_model": "crash-recovery",
+    "storage_model": "durable fsync",
+    "network_model": "async: omission, delay, reorder",
+    "timing_model": "asynchronous"
+  },
+  "consistencyModel": "linearizable",
+  "failureModel": "crash-recovery",
+  "historyShape": "line",
+  "geometries": ["membership", "safety"],
+  "framework_refs": ["§5.2 Membership Geometry", "§5.2 Joint Consensus"],
+  "hasControlPlane": true,
+  "steps": [
+    {
+      "id": 0,
+      "event": "Initial state — config 1: {R1, R2, R3}, R1 is leader, A committed",
+      "narration": "Same starting point as unsafe-reconfig. A is committed at idx=1 under config 1. Admin wants to move to {R4, R5, R6}.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "configEpoch": 1, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 }] }
+      },
+      "controlPlane": {
+        "configs": [{ "epoch": 1, "members": ["R1", "R2", "R3"] }],
+        "currentConfigEpoch": 1
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "commit", "holder": "R1", "epoch": 1, "detail": "A committed at idx=1, config 1", "evidence": { "quorum": ["R1", "R2", "R3"], "boundary": "C", "from": 0, "to": 1, "configEpoch": 1 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "membership"
+    },
+    {
+      "id": 1,
+      "event": "Phase 1: Enter JOINT config — {R1,R2,R3} ∪ {R4,R5,R6}",
+      "narration": "Instead of direct swap, R1 appends a joint config entry to the log. During this phase, any quorum must include a majority of the OLD config AND a majority of the NEW config. New replicas R4,R5,R6 begin catching up.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "configEpoch": 1, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 }
+        ]},
+        "R4": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 }
+        ]},
+        "R5": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 }
+        ]},
+        "R6": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 }
+        ]}
+      },
+      "controlPlane": {
+        "configs": [
+          { "epoch": 1, "members": ["R1", "R2", "R3"] },
+          { "epoch": 2, "members": ["R4", "R5", "R6"] }
+        ],
+        "currentConfigEpoch": 1,
+        "notes": "JOINT CONFIG: quorums require majority(old) ∩ majority(new)"
+      },
+      "messages": [
+        { "from": "R1", "to": "R4", "label": "catch-up: log [A, CFG_JOINT]", "type": "replication" },
+        { "from": "R1", "to": "R5", "label": "catch-up: log [A, CFG_JOINT]", "type": "replication" },
+        { "from": "R1", "to": "R6", "label": "catch-up: log [A, CFG_JOINT]", "type": "replication" }
+      ],
+      "certificates": [
+        { "type": "commit", "holder": "R1", "epoch": 1, "detail": "Joint config entry committed. Quorum requires majority of BOTH {R1,R2,R3} and {R4,R5,R6}.", "evidence": { "quorum": ["R1", "R2", "R4", "R5"], "boundary": "C", "from": 1, "to": 2, "configEpoch": 1 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "membership"
+    },
+    {
+      "id": 2,
+      "event": "Joint config committed — any election requires overlap with both",
+      "narration": "The joint config is now committed on all 6 replicas. If any election happens during this phase, the winner must collect votes from both old and new majorities. This guarantees that any new leader has seen the committed trunk.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "configEpoch": 1, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 }
+        ]},
+        "R4": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 }
+        ]},
+        "R5": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 }
+        ]},
+        "R6": { "epoch": 1, "leader": false, "configEpoch": 1, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 }
+        ]}
+      },
+      "controlPlane": {
+        "configs": [
+          { "epoch": 1, "members": ["R1", "R2", "R3"] },
+          { "epoch": 2, "members": ["R4", "R5", "R6"] }
+        ],
+        "currentConfigEpoch": 1,
+        "notes": "JOINT: any quorum = majority({R1,R2,R3}) ∩ majority({R4,R5,R6})"
+      },
+      "messages": [],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "membership"
+    },
+    {
+      "id": 3,
+      "event": "Phase 2: Commit new config — transition to config 2: {R4, R5, R6}",
+      "narration": "R1 appends the final config entry (CFG_NEW) to switch to config 2. Once committed, only the new config {R4, R5, R6} forms quorums. Old replicas can be decommissioned safely.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "configEpoch": 2, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 },
+          { "idx": 3, "val": "CFG_NEW", "epoch": 1, "configEpoch": 2 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "configEpoch": 2, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 },
+          { "idx": 3, "val": "CFG_NEW", "epoch": 1, "configEpoch": 2 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "configEpoch": 2, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 },
+          { "idx": 3, "val": "CFG_NEW", "epoch": 1, "configEpoch": 2 }
+        ]},
+        "R4": { "epoch": 1, "leader": false, "configEpoch": 2, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 },
+          { "idx": 3, "val": "CFG_NEW", "epoch": 1, "configEpoch": 2 }
+        ]},
+        "R5": { "epoch": 1, "leader": false, "configEpoch": 2, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 },
+          { "idx": 3, "val": "CFG_NEW", "epoch": 1, "configEpoch": 2 }
+        ]},
+        "R6": { "epoch": 1, "leader": false, "configEpoch": 2, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 },
+          { "idx": 3, "val": "CFG_NEW", "epoch": 1, "configEpoch": 2 }
+        ]}
+      },
+      "controlPlane": {
+        "configs": [
+          { "epoch": 1, "members": ["R1", "R2", "R3"] },
+          { "epoch": 2, "members": ["R4", "R5", "R6"] }
+        ],
+        "currentConfigEpoch": 2,
+        "notes": "Config 2 committed. New config active. Old replicas can step down."
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "commit", "holder": "R1", "epoch": 1, "detail": "New config committed with joint quorum. All new replicas have full log including A.", "evidence": { "quorum": ["R1", "R2", "R4", "R5"], "boundary": "C", "from": 2, "to": 3, "configEpoch": 2 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "membership"
+    },
+    {
+      "id": 4,
+      "event": "✅ R4 elected leader in config 2 — committed trunk preserved",
+      "narration": "R4 becomes leader under config 2. Because the joint consensus ensured all new replicas caught up, R4 has A at idx=1. The committed trunk is preserved across the config change. No data loss, no split brain.",
+      "replicas": {
+        "R4": { "epoch": 2, "leader": true, "configEpoch": 2, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 },
+          { "idx": 3, "val": "CFG_NEW", "epoch": 1, "configEpoch": 2 }
+        ]},
+        "R5": { "epoch": 2, "leader": false, "configEpoch": 2, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 },
+          { "idx": 3, "val": "CFG_NEW", "epoch": 1, "configEpoch": 2 }
+        ]},
+        "R6": { "epoch": 2, "leader": false, "configEpoch": 2, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1, "configEpoch": 1 },
+          { "idx": 2, "val": "CFG_JOINT", "epoch": 1, "configEpoch": 1 },
+          { "idx": 3, "val": "CFG_NEW", "epoch": 1, "configEpoch": 2 }
+        ]}
+      },
+      "controlPlane": {
+        "configs": [{ "epoch": 2, "members": ["R4", "R5", "R6"] }],
+        "currentConfigEpoch": 2,
+        "notes": "Transition complete. Old replicas {R1,R2,R3} decommissioned."
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "authority", "holder": "R4", "epoch": 2, "detail": "R4 elected leader, config 2. Has full committed history including A.", "evidence": { "quorum": ["R4", "R5"], "configEpoch": 2 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "membership"
+    }
+  ]
+}

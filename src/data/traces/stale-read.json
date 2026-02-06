@@ -1,0 +1,243 @@
+{
+  "id": "stale-read",
+  "title": "Stale Read: Follower Read Anomaly",
+  "description": "A follower serves a read from stale state while the leader has committed a newer value. Without a read certificate, the client's consistency guarantee is violated.",
+  "spec": {
+    "type": "Linearizable Register",
+    "invariant": "Single committed value per index",
+    "consistency_model": "linearizable",
+    "invariants": [
+      "Single committed value per index",
+      "Linearizable reads reflect the most recent committed write"
+    ],
+    "observations": ["read", "write"]
+  },
+  "environment": {
+    "fault_model": "crash-recovery",
+    "storage_model": "durable fsync",
+    "network_model": "async: omission, delay, reorder",
+    "timing_model": "asynchronous"
+  },
+  "consistencyModel": "linearizable",
+  "failureModel": "crash-recovery",
+  "historyShape": "line",
+  "geometries": ["observation", "safety"],
+  "framework_refs": ["§4.5 Observation Geometry", "§3.2 Read Certificate"],
+  "steps": [
+    {
+      "id": 0,
+      "event": "Initial state — 3 replicas, epoch 1, R1 is leader",
+      "narration": "Clean start. R1 is leader. Client will write V1 then try to read it.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "authority", "holder": "R1", "epoch": 1, "detail": "R1 elected leader, epoch 1", "evidence": { "quorum": ["R1", "R2", "R3"] } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "authority"
+    },
+    {
+      "id": 1,
+      "event": "Client writes V1, committed at idx=1",
+      "narration": "R1 appends V1, replicates to majority, and commits. All replicas have V1 at idx=1 with C=1.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "V1", "epoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "V1", "epoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "V1", "epoch": 1 }] }
+      },
+      "messages": [
+        { "from": "Client", "to": "R1", "label": "write(V1)", "type": "request" },
+        { "from": "R1", "to": "Client", "label": "ack(V1 committed)", "type": "ack" }
+      ],
+      "certificates": [
+        { "type": "commit", "holder": "R1", "epoch": 1, "detail": "Commit cert: idx=1, quorum={R1,R2,R3}", "evidence": { "quorum": ["R1", "R2", "R3"], "boundary": "C", "from": 0, "to": 1 } }
+      ],
+      "observations": [
+        {
+          "type": "clientWrite",
+          "actor": "Client",
+          "targetReplica": "R1",
+          "result": "ack",
+          "consistency": "linearizable",
+          "detail": "V1 committed at idx=1, acknowledged to client"
+        }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "safety"
+    },
+    {
+      "id": 2,
+      "event": "Client writes V2 — R1 commits, but R3 hasn't received it yet",
+      "narration": "R1 appends V2 at idx=2 and replicates to R2. R2 fsyncs and acks — that's a majority (R1 + R2). R1 commits. But R3 hasn't received V2 yet. R3's commit frontier is still C=1.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "V1", "epoch": 1 },
+          { "idx": 2, "val": "V2", "epoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "V1", "epoch": 1 },
+          { "idx": 2, "val": "V2", "epoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [
+          { "idx": 1, "val": "V1", "epoch": 1 }
+        ]}
+      },
+      "messages": [
+        { "from": "Client", "to": "R1", "label": "write(V2)", "type": "request" },
+        { "from": "R1", "to": "R2", "label": "append(V2, idx=2, e=1)", "type": "replication" },
+        { "from": "R2", "to": "R1", "label": "ack(fsync, idx=2)", "type": "ack" },
+        { "from": "R1", "to": "Client", "label": "ack(V2 committed)", "type": "ack" }
+      ],
+      "certificates": [
+        { "type": "commit", "holder": "R1", "epoch": 1, "detail": "Commit cert: idx=2, quorum={R1,R2}, epoch=1", "evidence": { "quorum": ["R1", "R2"], "boundary": "C", "from": 1, "to": 2 } }
+      ],
+      "observations": [
+        {
+          "type": "clientWrite",
+          "actor": "Client",
+          "targetReplica": "R1",
+          "result": "ack",
+          "consistency": "linearizable",
+          "detail": "V2 committed at idx=2, acknowledged to client. R3 not yet caught up."
+        }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "safety"
+    },
+    {
+      "id": 3,
+      "event": "🔴 Client reads from R3 (follower) — gets stale V1!",
+      "narration": "A client sends a read to R3. R3 serves the read from its local state: it returns V1 (the value at C=1). But V2 has already been committed! The client sees a stale value. If the system claims linearizability, this is a read anomaly.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "V1", "epoch": 1 },
+          { "idx": 2, "val": "V2", "epoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "V1", "epoch": 1 },
+          { "idx": 2, "val": "V2", "epoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [
+          { "idx": 1, "val": "V1", "epoch": 1 }
+        ], "danger": true}
+      },
+      "messages": [
+        { "from": "Client", "to": "R3", "label": "read()", "type": "request" },
+        { "from": "R3", "to": "Client", "label": "V1 (stale! C=1)", "type": "ack" }
+      ],
+      "certificates": [],
+      "observations": [
+        {
+          "type": "clientRead",
+          "actor": "Client",
+          "targetReplica": "R3",
+          "result": "V1",
+          "consistency": "eventual",
+          "detail": "R3 served V1 from C=1, but V2 is committed at C=2. This read is NOT linearizable — it violates the observation contract."
+        }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": false,
+      "violation": {
+        "type": "observation",
+        "law": "Read must reflect at least all committed effects",
+        "detail": "Client read V1 from follower R3 (C=1) after V2 was committed (C=2). Without a read certificate, the follower cannot guarantee it has seen all committed entries. Linearizability violated.",
+        "framework_ref": "§4.5 Observation Geometry: read/write contracts",
+        "bug_class": "read_anomaly"
+      },
+      "geometry_highlight": "observation"
+    },
+    {
+      "id": 4,
+      "event": "✅ Correct: Leader read with read certificate",
+      "narration": "The correct approach: reads that claim linearizability must go through the leader (or use a read certificate that proves the read frontier is up to date). R1 serves the read at C=2 and returns V2.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "V1", "epoch": 1 },
+          { "idx": 2, "val": "V2", "epoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "V1", "epoch": 1 },
+          { "idx": 2, "val": "V2", "epoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [
+          { "idx": 1, "val": "V1", "epoch": 1 }
+        ]}
+      },
+      "messages": [
+        { "from": "Client", "to": "R1", "label": "read()", "type": "request" },
+        { "from": "R1", "to": "Client", "label": "V2 (committed at C=2)", "type": "ack" }
+      ],
+      "certificates": [
+        { "type": "read", "holder": "R1", "epoch": 1, "detail": "Read cert: leader R1, read-index at C=2. Guarantees linearizable read.", "evidence": { "quorum": ["R1"], "boundary": "C", "from": 0, "to": 2 } }
+      ],
+      "observations": [
+        {
+          "type": "clientRead",
+          "actor": "Client",
+          "targetReplica": "R1",
+          "result": "V2",
+          "consistency": "linearizable",
+          "detail": "Leader read at C=2. Read certificate proves all committed effects are reflected."
+        }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "observation"
+    },
+    {
+      "id": 5,
+      "event": "Alternative: Follower read with quorum read certificate",
+      "narration": "A follower CAN serve linearizable reads if it obtains a read certificate via a quorum check. R3 contacts R1 to learn the latest commit index (C=2), catches up, then serves the read. This is a quorum-read or read-index protocol.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "V1", "epoch": 1 },
+          { "idx": 2, "val": "V2", "epoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "V1", "epoch": 1 },
+          { "idx": 2, "val": "V2", "epoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "V1", "epoch": 1 },
+          { "idx": 2, "val": "V2", "epoch": 1 }
+        ]}
+      },
+      "messages": [
+        { "from": "R3", "to": "R1", "label": "read-index request", "type": "heartbeat" },
+        { "from": "R1", "to": "R3", "label": "read-index: C=2", "type": "heartbeat" },
+        { "from": "R1", "to": "R3", "label": "append(V2, idx=2, e=1)", "type": "replication" },
+        { "from": "Client", "to": "R3", "label": "read()", "type": "request" },
+        { "from": "R3", "to": "Client", "label": "V2 (after catching up to C=2)", "type": "ack" }
+      ],
+      "certificates": [
+        { "type": "read", "holder": "R3", "epoch": 1, "detail": "Read cert: R3 obtained read-index from leader, caught up to C=2. Linearizable follower read.", "evidence": { "quorum": ["R1"], "boundary": "C", "from": 0, "to": 2 } }
+      ],
+      "observations": [
+        {
+          "type": "clientRead",
+          "actor": "Client",
+          "targetReplica": "R3",
+          "result": "V2",
+          "consistency": "linearizable",
+          "detail": "Follower R3 served linearizable read after obtaining read certificate from leader and catching up to C=2"
+        }
+      ],
+      "boundaries_moved": [
+        { "replica": "R3", "boundary": "D", "from": 1, "to": 2 },
+        { "replica": "R3", "boundary": "A", "from": 1, "to": 2 },
+        { "replica": "R3", "boundary": "C", "from": 1, "to": 2 },
+        { "replica": "R3", "boundary": "E", "from": 1, "to": 2 }
+      ],
+      "invariants_ok": true,
+      "geometry_highlight": "observation"
+    }
+  ]
+}

@@ -1,0 +1,307 @@
+{
+  "id": "coordination-cut",
+  "title": "Coordination Cut: Where CALM Ends",
+  "description": "A hybrid system where monotone operations (event logging) run coordination-free, but a non-monotone invariant (unique sequence numbers) forces a thin consensus layer. The 'coordination cut' is the boundary between what can be done without consensus and what cannot.",
+  "spec": {
+    "type": "Event Log with Unique Sequence Numbers",
+    "invariant": "Every event gets a globally unique sequence number",
+    "consistency_model": "causal",
+    "invariants": [
+      "Events can be appended coordination-free (monotone: log only grows)",
+      "Sequence numbers must be globally unique (non-monotone: requires coordination)",
+      "Sequence numbers must be monotone in assignment order"
+    ],
+    "observations": ["read", "write"]
+  },
+  "environment": {
+    "fault_model": "crash-recovery",
+    "storage_model": "durable",
+    "network_model": "async: omission, delay, reorder, partition",
+    "timing_model": "asynchronous"
+  },
+  "consistencyModel": "causal",
+  "failureModel": "crash-recovery",
+  "historyShape": "dag",
+  "geometries": ["causality", "authority", "composition"],
+  "framework_refs": ["§5.3 CALM Theorem (inverse)", "§4.3 Coupling Law", "§5.1 Ownership"],
+  "hasControlPlane": true,
+  "steps": [
+    {
+      "id": 0,
+      "event": "Initial state — hybrid architecture: 2 data replicas + 1 sequencer",
+      "narration": "R1 and R2 are data replicas that accept events in DAG mode (coordination-free). SEQ is a consensus-based sequencer that assigns globally unique sequence numbers. The 'coordination cut' divides the system: below the cut (event appending) is CALM-safe; above the cut (numbering) requires consensus.",
+      "replicas": {
+        "R1": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "events": [], "vectorClock": { "R1": 0, "R2": 0 } }
+        },
+        "R2": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "events": [], "vectorClock": { "R1": 0, "R2": 0 } }
+        },
+        "SEQ": {
+          "epoch": 1, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "shard": "sequencer"
+        }
+      },
+      "controlPlane": {
+        "shardMap": [
+          { "shard": "data", "configEpoch": 1, "replicas": ["R1", "R2"] },
+          { "shard": "sequencer", "configEpoch": 1, "replicas": ["SEQ"] }
+        ],
+        "currentConfigEpoch": 1,
+        "notes": "Hybrid: data shard (DAG, coordination-free) + sequencer shard (consensus)"
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "authority", "holder": "SEQ", "epoch": 1, "detail": "SEQ is the sequencer (only consensus participant)", "evidence": { "quorum": ["SEQ"] } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "causality"
+    },
+    {
+      "id": 1,
+      "event": "R1 generates event e1, gossips to R2 — no coordination needed",
+      "narration": "R1 receives an event 'user_signup'. It appends to its local event log and gossips to R2. This is the coordination-free zone: appending events is monotone (the log only grows). No sequence number yet — that requires the sequencer.",
+      "replicas": {
+        "R1": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "events": ["e1:user_signup"], "vectorClock": { "R1": 1, "R2": 0 } }
+        },
+        "R2": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "events": ["e1:user_signup"], "vectorClock": { "R1": 1, "R2": 0 } }
+        },
+        "SEQ": {
+          "epoch": 1, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "shard": "sequencer"
+        }
+      },
+      "controlPlane": {
+        "shardMap": [
+          { "shard": "data", "configEpoch": 1, "replicas": ["R1", "R2"] },
+          { "shard": "sequencer", "configEpoch": 1, "replicas": ["SEQ"] }
+        ],
+        "currentConfigEpoch": 1
+      },
+      "messages": [
+        { "from": "Client", "to": "R1", "label": "event(user_signup)", "type": "request" },
+        { "from": "R1", "to": "R2", "label": "gossip(e1, VC=[1,0])", "type": "replication" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "causality"
+    },
+    {
+      "id": 2,
+      "event": "R1 requests seq# from SEQ — crossing the coordination cut",
+      "narration": "Now R1 needs a unique sequence number for e1. This is NON-monotone: two events can't share the same number. R1 must cross the coordination cut and ask SEQ. SEQ assigns seq#=1 to e1 via consensus (trivially, since SEQ is a single node here — in production it would be a Raft/Paxos group).",
+      "replicas": {
+        "R1": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "events": ["e1:user_signup(seq#1)"], "vectorClock": { "R1": 1, "R2": 0 } }
+        },
+        "R2": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "events": ["e1:user_signup"], "vectorClock": { "R1": 1, "R2": 0 } }
+        },
+        "SEQ": {
+          "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1,
+          "log": [{ "idx": 1, "val": "e1→seq#1", "epoch": 1 }],
+          "shard": "sequencer"
+        }
+      },
+      "controlPlane": {
+        "shardMap": [
+          { "shard": "data", "configEpoch": 1, "replicas": ["R1", "R2"] },
+          { "shard": "sequencer", "configEpoch": 1, "replicas": ["SEQ"] }
+        ],
+        "currentConfigEpoch": 1
+      },
+      "messages": [
+        { "from": "R1", "to": "SEQ", "label": "assign_seq(e1)", "type": "request" },
+        { "from": "SEQ", "to": "R1", "label": "seq#=1 for e1", "type": "ack" }
+      ],
+      "certificates": [
+        { "type": "commit", "holder": "SEQ", "epoch": 1, "detail": "SEQ assigns seq#1 to e1 — consensus decision", "evidence": { "quorum": ["SEQ"], "boundary": "C", "from": 0, "to": 1 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "authority"
+    },
+    {
+      "id": 3,
+      "event": "Partition: SEQ becomes unreachable. R2 generates event e2.",
+      "narration": "A network partition isolates SEQ from R1 and R2. R2 generates event e2 (page_view). This can still be appended to the DAG (coordination-free zone works fine). But e2 CANNOT get a sequence number — SEQ is unreachable. The data plane stays available; the coordination plane stalls.",
+      "replicas": {
+        "R1": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "events": ["e1:user_signup(seq#1)"], "vectorClock": { "R1": 1, "R2": 0 } }
+        },
+        "R2": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "events": ["e1:user_signup", "e2:page_view"], "vectorClock": { "R1": 1, "R2": 1 } }
+        },
+        "SEQ": {
+          "epoch": 1, "leader": true, "partitioned": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1,
+          "log": [{ "idx": 1, "val": "e1→seq#1", "epoch": 1 }],
+          "shard": "sequencer"
+        }
+      },
+      "controlPlane": {
+        "shardMap": [
+          { "shard": "data", "configEpoch": 1, "replicas": ["R1", "R2"] },
+          { "shard": "sequencer", "configEpoch": 1, "replicas": ["SEQ"] }
+        ],
+        "currentConfigEpoch": 1,
+        "notes": "SEQ partitioned — data plane available, seq# assignment stalled"
+      },
+      "messages": [
+        { "from": "Client", "to": "R2", "label": "event(page_view)", "type": "request" },
+        { "from": "R2", "to": "R1", "label": "gossip(e2, VC=[1,1])", "type": "replication" },
+        { "from": "R2", "to": "SEQ", "label": "assign_seq(e2) — DROPPED", "type": "request", "delivered": false }
+      ],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "causality"
+    },
+    {
+      "id": 4,
+      "event": "R1 generates e3 — data keeps flowing, seq#s queue up",
+      "narration": "R1 generates e3 (purchase). The event is appended and gossiped (DAG zone works). But both e2 and e3 are waiting for sequence numbers. The coordination cut is visible: everything below the cut (event logging, gossip, merge) is available. Everything above the cut (unique numbering) is blocked by the partition.",
+      "replicas": {
+        "R1": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "events": ["e1:user_signup(seq#1)", "e2:page_view", "e3:purchase"], "vectorClock": { "R1": 2, "R2": 1 } }
+        },
+        "R2": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "events": ["e1:user_signup", "e2:page_view", "e3:purchase"], "vectorClock": { "R1": 2, "R2": 1 } }
+        },
+        "SEQ": {
+          "epoch": 1, "leader": true, "partitioned": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1,
+          "log": [{ "idx": 1, "val": "e1→seq#1", "epoch": 1 }],
+          "shard": "sequencer"
+        }
+      },
+      "controlPlane": {
+        "shardMap": [
+          { "shard": "data", "configEpoch": 1, "replicas": ["R1", "R2"] },
+          { "shard": "sequencer", "configEpoch": 1, "replicas": ["SEQ"] }
+        ],
+        "currentConfigEpoch": 1,
+        "notes": "3 events in data plane; only 1 has a seq#. 2 pending."
+      },
+      "messages": [
+        { "from": "Client", "to": "R1", "label": "event(purchase)", "type": "request" },
+        { "from": "R1", "to": "R2", "label": "gossip(e3, VC=[2,1])", "type": "replication" }
+      ],
+      "certificates": [],
+      "observations": [
+        {
+          "type": "clientRead",
+          "actor": "Client",
+          "targetReplica": "R1",
+          "result": "3 events (1 numbered, 2 pending)",
+          "consistency": "causal",
+          "detail": "Client sees all events (data plane available) but 2 events lack sequence numbers (coordination plane stalled). This is the tradeoff: availability for the monotone part, stall for the non-monotone part."
+        }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "causality"
+    },
+    {
+      "id": 5,
+      "event": "Partition heals — SEQ assigns seq#2 and seq#3",
+      "narration": "The partition heals. SEQ receives the queued requests for e2 and e3. It assigns seq#2 to e2 and seq#3 to e3, maintaining monotonicity (the coupling law applies even in the hybrid: sequence assignments must be monotone in epoch). All events now have unique, ordered sequence numbers.",
+      "replicas": {
+        "R1": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "events": ["e1:user_signup(seq#1)", "e2:page_view(seq#2)", "e3:purchase(seq#3)"], "vectorClock": { "R1": 2, "R2": 1 } }
+        },
+        "R2": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "events": ["e1:user_signup(seq#1)", "e2:page_view(seq#2)", "e3:purchase(seq#3)"], "vectorClock": { "R1": 2, "R2": 1 } }
+        },
+        "SEQ": {
+          "epoch": 1, "leader": true, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3,
+          "log": [
+            { "idx": 1, "val": "e1→seq#1", "epoch": 1 },
+            { "idx": 2, "val": "e2→seq#2", "epoch": 1 },
+            { "idx": 3, "val": "e3→seq#3", "epoch": 1 }
+          ],
+          "shard": "sequencer"
+        }
+      },
+      "controlPlane": {
+        "shardMap": [
+          { "shard": "data", "configEpoch": 1, "replicas": ["R1", "R2"] },
+          { "shard": "sequencer", "configEpoch": 1, "replicas": ["SEQ"] }
+        ],
+        "currentConfigEpoch": 1,
+        "notes": "All events numbered. Coordination cut resolved."
+      },
+      "messages": [
+        { "from": "R1", "to": "SEQ", "label": "assign_seq(e2, e3)", "type": "request" },
+        { "from": "SEQ", "to": "R1", "label": "seq#2=e2, seq#3=e3", "type": "ack" },
+        { "from": "R1", "to": "R2", "label": "gossip(seq# assignments)", "type": "replication" }
+      ],
+      "certificates": [
+        { "type": "commit", "holder": "SEQ", "epoch": 1, "detail": "SEQ assigns seq#2,3 — monotone in epoch 1", "evidence": { "quorum": ["SEQ"], "boundary": "C", "from": 1, "to": 3 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "authority"
+    },
+    {
+      "id": 6,
+      "event": "All converged — hybrid architecture demonstrated",
+      "narration": "Final state: all 3 events have unique sequence numbers (1, 2, 3), all replicas agree on the event set, and the sequencer's log is consistent. The coordination cut architecture: (1) Below the cut: event logging, gossip, and CRDT merge are coordination-free (CALM-safe). (2) Above the cut: unique numbering requires consensus. The system maximizes availability by minimizing where coordination is needed.",
+      "replicas": {
+        "R1": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "events": ["e1:user_signup(seq#1)", "e2:page_view(seq#2)", "e3:purchase(seq#3)"], "vectorClock": { "R1": 2, "R2": 1 } }
+        },
+        "R2": {
+          "epoch": 0, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [],
+          "crdtState": { "events": ["e1:user_signup(seq#1)", "e2:page_view(seq#2)", "e3:purchase(seq#3)"], "vectorClock": { "R1": 2, "R2": 1 } }
+        },
+        "SEQ": {
+          "epoch": 1, "leader": true, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3,
+          "log": [
+            { "idx": 1, "val": "e1→seq#1", "epoch": 1 },
+            { "idx": 2, "val": "e2→seq#2", "epoch": 1 },
+            { "idx": 3, "val": "e3→seq#3", "epoch": 1 }
+          ],
+          "shard": "sequencer"
+        }
+      },
+      "controlPlane": {
+        "shardMap": [
+          { "shard": "data", "configEpoch": 1, "replicas": ["R1", "R2"] },
+          { "shard": "sequencer", "configEpoch": 1, "replicas": ["SEQ"] }
+        ],
+        "currentConfigEpoch": 1
+      },
+      "messages": [],
+      "certificates": [],
+      "observations": [
+        {
+          "type": "clientRead",
+          "actor": "Client",
+          "targetReplica": "R1",
+          "result": "3 events, all uniquely numbered",
+          "consistency": "causal",
+          "detail": "CALM lesson: minimize coordination. Event appending (monotone) needs none. Sequence numbering (non-monotone) needs consensus. The coordination cut tells you exactly where to place the boundary."
+        }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "causality"
+    }
+  ]
+}

@@ -1,0 +1,206 @@
+{
+  "id": "split-brain",
+  "title": "Split Brain: Sub-Quorum Election",
+  "description": "A buggy election grants authority to R4 with only 2/5 votes (below the quorum of 3). The certificate is invalid \u2014 it wasn't obtained via a valid quorum \u2014 allowing two leaders to operate simultaneously and produce divergent committed trunks.",
+  "spec": {
+    "type": "Linearizable Register",
+    "invariant": "Single committed value per index",
+    "consistency_model": "linearizable",
+    "invariants": [
+      "Single committed value per index",
+      "At most one leader per epoch"
+    ],
+    "observations": ["read", "write"]
+  },
+  "environment": {
+    "fault_model": "crash-recovery",
+    "storage_model": "durable fsync",
+    "network_model": "async: omission, delay, reorder",
+    "timing_model": "asynchronous"
+  },
+  "consistencyModel": "linearizable",
+  "failureModel": "crash-recovery",
+  "historyShape": "line",
+  "geometries": ["authority", "failure", "safety"],
+  "framework_refs": ["\u00a74.2 Authority Geometry", "\u00a77.2 split_brain"],
+  "steps": [
+    {
+      "id": 0,
+      "event": "Initial state \u2014 5 replicas, epoch 1, R1 is leader",
+      "narration": "5-node cluster with R1 as leader in epoch 1. Quorum is 3.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R4": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R5": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "authority", "holder": "R1", "epoch": 1, "detail": "R1 elected leader, epoch 1, votes: {R1, R2, R3}", "evidence": { "quorum": ["R1", "R2", "R3"] } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "authority"
+    },
+    {
+      "id": 1,
+      "event": "R1 appends A at index 1, replicates to R2 and R3",
+      "narration": "Normal replication. R1 appends A and gets it to a majority {R1, R2, R3}. All three fsync.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R4": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R5": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [
+        { "from": "Client", "to": "R1", "label": "write(A)", "type": "request" },
+        { "from": "R1", "to": "R2", "label": "append(A, idx=1, e=1)", "type": "replication" },
+        { "from": "R1", "to": "R3", "label": "append(A, idx=1, e=1)", "type": "replication" },
+        { "from": "R2", "to": "R1", "label": "ack(fsync)", "type": "ack" },
+        { "from": "R3", "to": "R1", "label": "ack(fsync)", "type": "ack" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "safety"
+    },
+    {
+      "id": 2,
+      "event": "R1 commits A \u2014 C advances to 1",
+      "narration": "R1 has a valid commit certificate: quorum {R1, R2, R3} all durable in epoch 1.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R4": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R5": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "commit", "holder": "R1", "epoch": 1, "detail": "Commit cert: idx=1, quorum={R1,R2,R3}, epoch=1", "evidence": { "quorum": ["R1", "R2", "R3"], "boundary": "C", "from": 0, "to": 1 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "safety"
+    },
+    {
+      "id": 3,
+      "event": "\u26a1 Network partition: {R1,R2,R3} isolated from {R4,R5}",
+      "narration": "Network splits. R4 and R5 cannot reach R1, R2, R3. In a correct protocol with 5 nodes, neither partition of size 2 can form a quorum. But what if the election protocol has a bug?",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }], "partitioned": true },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }], "partitioned": true },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }], "partitioned": true },
+        "R4": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R5": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "failure"
+    },
+    {
+      "id": 4,
+      "event": "\ud83d\udd34 BUG: R4 wins election in epoch 2 with only {R4, R5}",
+      "narration": "Due to a buggy election protocol, R4 obtains an authority certificate for epoch 2 with only 2 votes (below quorum of 3). Having leaders in different epochs is normal and safe in correct protocols \u2014 the critical issue is that R4's certificate is INVALID because {R4,R5} cannot intersect with any valid quorum of 3. This missing intersection is what enables the divergent writes.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }], "partitioned": true },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }], "partitioned": true },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }], "partitioned": true },
+        "R4": { "epoch": 2, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [], "danger": true },
+        "R5": { "epoch": 2, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "authority", "holder": "R4", "epoch": 2, "detail": "INVALID: R4 elected with only {R4, R5} — not a quorum!", "valid": false, "evidence": { "quorum": ["R4", "R5"] } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": false,
+      "violation": {
+        "type": "authority",
+        "law": "Authority requires quorum",
+        "detail": "R4 obtained an authority certificate with only 2/5 votes. A valid quorum requires 3/5. R1 also holds a valid authority cert for epoch 1. Two leaders exist simultaneously.",
+        "framework_ref": "\u00a74.2 Authority Geometry: epoch fencing",
+        "bug_class": "split_brain"
+      },
+      "geometry_highlight": "authority"
+    },
+    {
+      "id": 5,
+      "event": "R4 appends B at index 1, replicates to R5",
+      "narration": "R4 writes B at the same index where A is already committed. R4 and R5 now have a divergent history. This is the split brain in action \u2014 two leaders writing to the same log position.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }], "partitioned": true },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }], "partitioned": true },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }], "partitioned": true },
+        "R4": { "epoch": 2, "leader": true, "T": 0, "D": 1, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "B", "epoch": 2 }], "danger": true },
+        "R5": { "epoch": 2, "leader": false, "T": 0, "D": 1, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "B", "epoch": 2 }] }
+      },
+      "messages": [
+        { "from": "Client", "to": "R4", "label": "write(B)", "type": "request" },
+        { "from": "R4", "to": "R5", "label": "append(B, idx=1, e=2)", "type": "replication" },
+        { "from": "R5", "to": "R4", "label": "ack(fsync)", "type": "ack" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": false,
+      "violation": {
+        "type": "authority",
+        "law": "Authority uniqueness per epoch",
+        "detail": "R4 wrote B at idx=1 while R1's A at idx=1 is already committed. Two different values at the same index \u2014 linearizability is broken.",
+        "framework_ref": "\u00a74.2 Authority Geometry: epoch fencing",
+        "bug_class": "split_brain"
+      },
+      "geometry_highlight": "authority"
+    },
+    {
+      "id": 6,
+      "event": "\u26a1 Partition heals \u2014 both histories visible",
+      "narration": "Network heals. Now the cluster sees both A (committed by R1's quorum) and B (written by R4's invalid authority). The committed trunk has diverged \u2014 an irrecoverable split brain.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R4": { "epoch": 2, "leader": true, "T": 0, "D": 1, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "B", "epoch": 2 }], "danger": true },
+        "R5": { "epoch": 2, "leader": false, "T": 0, "D": 1, "A": 0, "C": 0, "E": 1, "log": [{ "idx": 1, "val": "B", "epoch": 2 }] }
+      },
+      "messages": [],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": false,
+      "violation": {
+        "type": "authority",
+        "law": "Single authority per epoch",
+        "detail": "The cluster has two conflicting entries at idx=1: A (committed, e=1) and B (uncommitted, e=2 via invalid authority). Quorum intersection would have prevented this \u2014 any valid quorum of 3 must overlap with {R1,R2,R3}.",
+        "framework_ref": "\u00a74.2 Authority Geometry: epoch fencing",
+        "bug_class": "split_brain"
+      },
+      "geometry_highlight": "authority"
+    },
+    {
+      "id": 7,
+      "event": "\u2705 Correct: Epoch 3 election via valid quorum resolves split",
+      "narration": "A correct election forms in epoch 3 with quorum {R2, R3, R4}. The new leader discovers A is committed (on R2, R3) and B was under invalid authority. B is discarded. The fix: elections MUST require a quorum, which guarantees intersection with any committed state.",
+      "replicas": {
+        "R1": { "epoch": 3, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R2": { "epoch": 3, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R3": { "epoch": 3, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R4": { "epoch": 3, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] },
+        "R5": { "epoch": 3, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "A", "epoch": 1 }] }
+      },
+      "messages": [
+        { "from": "R2", "to": "R4", "label": "log: A@(e=1, idx=1) committed", "type": "replication" },
+        { "from": "R2", "to": "R5", "label": "log: A@(e=1, idx=1) committed", "type": "replication" }
+      ],
+      "certificates": [
+        { "type": "authority", "holder": "R2", "epoch": 3, "detail": "R2 elected, epoch 3, votes: {R2, R3, R4} — valid quorum", "evidence": { "quorum": ["R2", "R3", "R4"] } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "authority"
+    }
+  ]
+}

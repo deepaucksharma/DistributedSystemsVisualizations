@@ -1,0 +1,241 @@
+{
+  "id": "trim-cliff",
+  "title": "Trim Cliff: Lagging Replica Behind Trim Frontier",
+  "description": "A slow follower falls behind the trim frontier. Once T advances past entries the replica needs, log replay is impossible — the replica hits the trim cliff.",
+  "spec": {
+    "type": "Linearizable Register",
+    "invariant": "Single committed value per index",
+    "consistency_model": "linearizable",
+    "invariants": [
+      "Single committed value per index",
+      "Catch-up by replay possible iff needed position ≥ T"
+    ],
+    "observations": ["read", "write"]
+  },
+  "environment": {
+    "fault_model": "crash-recovery",
+    "storage_model": "durable fsync",
+    "network_model": "async: omission, delay, reorder",
+    "timing_model": "asynchronous"
+  },
+  "consistencyModel": "linearizable",
+  "failureModel": "crash-recovery",
+  "historyShape": "line",
+  "geometries": ["resource", "safety"],
+  "framework_refs": ["§2.5 Boundaries", "§4.4 Resource Geometry"],
+  "steps": [
+    {
+      "id": 0,
+      "event": "Initial state — 3 replicas, epoch 1, R1 is leader",
+      "narration": "Clean start. R1 is leader, all boundaries at 0. All replicas are up to date.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "authority", "holder": "R1", "epoch": 1, "detail": "R1 elected leader, epoch 1", "evidence": { "quorum": ["R1", "R2", "R3"] } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "authority"
+    },
+    {
+      "id": 1,
+      "event": "R1 writes and commits entries 1-3, all replicas caught up",
+      "narration": "Normal operation. Three entries committed and replicated to all replicas. The log grows: idx 1, 2, 3 all committed.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1 },
+          { "idx": 2, "val": "B", "epoch": 1 },
+          { "idx": 3, "val": "C", "epoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1 },
+          { "idx": 2, "val": "B", "epoch": 1 },
+          { "idx": 3, "val": "C", "epoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1 },
+          { "idx": 2, "val": "B", "epoch": 1 },
+          { "idx": 3, "val": "C", "epoch": 1 }
+        ]}
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "commit", "holder": "R1", "epoch": 1, "detail": "Commit cert: idx=1-3, quorum={R1,R2,R3}, epoch=1", "evidence": { "quorum": ["R1", "R2", "R3"], "boundary": "C", "from": 0, "to": 3 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "safety"
+    },
+    {
+      "id": 2,
+      "event": "⚡ R3 becomes slow — network partition isolates R3",
+      "narration": "R3 is still at C=3 but becomes unreachable. It will miss all future writes. Meanwhile, R1 and R2 continue operating normally with their majority quorum.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1 },
+          { "idx": 2, "val": "B", "epoch": 1 },
+          { "idx": 3, "val": "C", "epoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1 },
+          { "idx": 2, "val": "B", "epoch": 1 },
+          { "idx": 3, "val": "C", "epoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1 },
+          { "idx": 2, "val": "B", "epoch": 1 },
+          { "idx": 3, "val": "C", "epoch": 1 }
+        ], "partitioned": true}
+      },
+      "messages": [],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "failure"
+    },
+    {
+      "id": 3,
+      "event": "R1 commits entries 4-7, R3 still partitioned",
+      "narration": "Time passes. R1 and R2 commit several more entries (4 through 7). R3 is stuck at E=3. The gap between R3 and the cluster widens. R3 will need entries 4-7 to catch up.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 1, "val": "A", "epoch": 1 },
+          { "idx": 2, "val": "B", "epoch": 1 },
+          { "idx": 3, "val": "C", "epoch": 1 },
+          { "idx": 4, "val": "D", "epoch": 1 },
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 1, "val": "A", "epoch": 1 },
+          { "idx": 2, "val": "B", "epoch": 1 },
+          { "idx": 3, "val": "C", "epoch": 1 },
+          { "idx": 4, "val": "D", "epoch": 1 },
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1 },
+          { "idx": 2, "val": "B", "epoch": 1 },
+          { "idx": 3, "val": "C", "epoch": 1 }
+        ], "partitioned": true}
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "commit", "holder": "R1", "epoch": 1, "detail": "Commit cert: idx=4-7, quorum={R1,R2}, epoch=1", "evidence": { "quorum": ["R1", "R2"], "boundary": "C", "from": 3, "to": 7 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "safety"
+    },
+    {
+      "id": 4,
+      "event": "R1 and R2 trim log — T advances to 5",
+      "narration": "To reclaim disk space, R1 and R2 advance their trim frontier to 5. Entries at indices 1-4 are discarded from the log. This is safe for R1 and R2 (both have applied these entries). But R3 needs entry 4 to catch up...",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1 },
+          { "idx": 2, "val": "B", "epoch": 1 },
+          { "idx": 3, "val": "C", "epoch": 1 }
+        ], "partitioned": true}
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "trim", "holder": "R1", "epoch": 1, "detail": "Trim cert: advance T to 5, all entries ≤ 4 committed and applied on quorum", "evidence": { "quorum": ["R1", "R2"], "boundary": "T", "from": 0, "to": 5 } }
+      ],
+      "boundaries_moved": [
+        { "replica": "R1", "boundary": "T", "from": 0, "to": 5 },
+        { "replica": "R2", "boundary": "T", "from": 0, "to": 5 }
+      ],
+      "invariants_ok": true,
+      "geometry_highlight": "resource"
+    },
+    {
+      "id": 5,
+      "event": "🔴 R3 comes back — needs entry 4 but it's been trimmed!",
+      "narration": "R3 rejoins the cluster with E=3. To catch up, R3 needs entries starting at idx=4. But the leader's log starts at idx=5 (T=5). Entry 4 is gone — trimmed. R3 has fallen off the trim cliff. Log replay is impossible.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1 },
+          { "idx": 2, "val": "B", "epoch": 1 },
+          { "idx": 3, "val": "C", "epoch": 1 }
+        ], "danger": true}
+      },
+      "messages": [
+        { "from": "R3", "to": "R1", "label": "catch-up request (need idx ≥ 4)", "type": "request" },
+        { "from": "R1", "to": "R3", "label": "NACK: log starts at idx=5, entry 4 trimmed", "type": "ack" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": false,
+      "violation": {
+        "type": "resource",
+        "law": "Catch-up by replay iff needed position ≥ T",
+        "detail": "R3 needs entry at idx=4, but all peers have T≥5. No snapshot exists at any position ≥ 4. R3 cannot catch up — it has fallen off the trim cliff.",
+        "framework_ref": "§4.4 Resource Geometry: retention and trim",
+        "bug_class": "trim_cliff"
+      },
+      "geometry_highlight": "resource"
+    },
+    {
+      "id": 6,
+      "event": "⚠️ Without snapshot, R3 must be rebuilt from scratch",
+      "narration": "The trim cliff is a resource geometry failure. The fix: before advancing T, ensure a snapshot exists at or beyond T that can be used to bootstrap lagging replicas. Without it, R3 is permanently stuck. See the 'Snapshot Install' scenario for the correct approach.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1 },
+          { "idx": 2, "val": "B", "epoch": 1 },
+          { "idx": 3, "val": "C", "epoch": 1 }
+        ], "danger": true}
+      },
+      "messages": [],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": false,
+      "violation": {
+        "type": "resource",
+        "law": "Trim requires snapshot path for recovery",
+        "detail": "Advancing T without a snapshot at T is unsafe when lagging replicas exist. The system lacks a recovery path for R3.",
+        "framework_ref": "§4.4 Resource Geometry: retention and trim",
+        "bug_class": "trim_cliff"
+      },
+      "geometry_highlight": "resource"
+    }
+  ]
+}

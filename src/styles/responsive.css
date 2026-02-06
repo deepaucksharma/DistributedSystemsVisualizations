@@ -1,0 +1,47 @@
+/* Responsive layout — overrides inline styles at smaller breakpoints */
+
+/* Medium screens: stack the two-column grid */
+@media (max-width: 900px) {
+  .trace-two-col {
+    grid-template-columns: 1fr !important;
+  }
+
+  .trace-root {
+    padding: 12px 10px !important;
+  }
+
+  /* Compare mode stacks vertically on medium screens */
+  .compare-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .compare-grid > div {
+    border-right: none !important;
+    border-bottom: 2px solid #334155;
+    max-height: none !important;
+  }
+}
+
+/* Small screens: tighter padding, smaller fonts */
+@media (max-width: 600px) {
+  .trace-root {
+    padding: 8px 6px !important;
+  }
+
+  .trace-root h1 {
+    font-size: 15px !important;
+  }
+
+  .scenario-selector {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .scenario-selector > div:last-child {
+    min-width: max-content;
+  }
+
+  .trace-panel {
+    padding: 10px 10px !important;
+  }
+}

@@ -1,0 +1,215 @@
+{
+  "id": "cross-shard-txn",
+  "title": "Cross-Shard Transaction: Two-Phase Commit",
+  "description": "A transaction transfers value across two shards using 2PC. Transaction certificates ensure atomicity — both shards commit or neither does.",
+  "spec": {
+    "type": "Cross-Shard Transactional Store",
+    "invariant": "Atomic cross-shard transactions",
+    "consistency_model": "serializable",
+    "invariants": [
+      "Transaction atomicity: all shards commit or all abort",
+      "Shard ownership determines routing"
+    ],
+    "observations": ["read", "write", "txnCommit"]
+  },
+  "environment": {
+    "fault_model": "crash-recovery",
+    "storage_model": "durable fsync",
+    "network_model": "async: omission, delay, reorder",
+    "timing_model": "asynchronous"
+  },
+  "consistencyModel": "linearizable",
+  "failureModel": "crash-recovery",
+  "historyShape": "line",
+  "geometries": ["composition", "ownership", "safety"],
+  "framework_refs": ["§5.4 Composition", "§5.1 Ownership", "§3.2 Transaction Certificate"],
+  "hasControlPlane": true,
+  "shards": ["S1", "S2"],
+  "steps": [
+    {
+      "id": 0,
+      "event": "Initial state — two shards, each with 3 replicas",
+      "narration": "Shard S1 (keys A-M) has replicas S1.R1, S1.R2, S1.R3. Shard S2 (keys N-Z) has replicas S2.R1, S2.R2, S2.R3. Each shard runs independent consensus.",
+      "replicas": {
+        "S1.R1": { "epoch": 1, "leader": true, "shard": "S1", "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "S1.R2": { "epoch": 1, "leader": false, "shard": "S1", "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "S1.R3": { "epoch": 1, "leader": false, "shard": "S1", "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "S2.R1": { "epoch": 1, "leader": true, "shard": "S2", "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "S2.R2": { "epoch": 1, "leader": false, "shard": "S2", "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "S2.R3": { "epoch": 1, "leader": false, "shard": "S2", "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "controlPlane": {
+        "shardMap": [
+          { "shard": "S1", "configEpoch": 1, "replicas": ["S1.R1", "S1.R2", "S1.R3"] },
+          { "shard": "S2", "configEpoch": 1, "replicas": ["S2.R1", "S2.R2", "S2.R3"] }
+        ],
+        "currentConfigEpoch": 1,
+        "notes": "S1: keys A-M, S2: keys N-Z"
+      },
+      "messages": [],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "ownership"
+    },
+    {
+      "id": 1,
+      "event": "Client: transfer $100 from Alice (S1) to Ned (S2)",
+      "narration": "Client initiates a cross-shard transaction. Alice's account is on S1 (key 'Alice' in A-M range), Ned's account is on S2 (key 'Ned' in N-Z range). Coordinator (S1.R1) begins 2PC.",
+      "replicas": {
+        "S1.R1": { "epoch": 1, "leader": true, "shard": "S1", "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "S1.R2": { "epoch": 1, "leader": false, "shard": "S1", "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "S1.R3": { "epoch": 1, "leader": false, "shard": "S1", "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "S2.R1": { "epoch": 1, "leader": true, "shard": "S2", "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "S2.R2": { "epoch": 1, "leader": false, "shard": "S2", "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "S2.R3": { "epoch": 1, "leader": false, "shard": "S2", "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "controlPlane": {
+        "shardMap": [
+          { "shard": "S1", "configEpoch": 1, "replicas": ["S1.R1", "S1.R2", "S1.R3"] },
+          { "shard": "S2", "configEpoch": 1, "replicas": ["S2.R1", "S2.R2", "S2.R3"] }
+        ],
+        "currentConfigEpoch": 1
+      },
+      "messages": [
+        { "from": "Client", "to": "S1.R1", "label": "txn: Alice -$100, Ned +$100", "type": "request" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "composition"
+    },
+    {
+      "id": 2,
+      "event": "Phase 1 (Prepare): Both shards log PREPARE records",
+      "narration": "S1.R1 (coordinator) sends prepare to both shards. Each shard leader appends a PREPARE record to its log and commits it within the shard. S1 prepares 'Alice -$100', S2 prepares 'Ned +$100'.",
+      "replicas": {
+        "S1.R1": { "epoch": 1, "leader": true, "shard": "S1", "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "PREPARE(txn1: Alice -$100)", "epoch": 1 }] },
+        "S1.R2": { "epoch": 1, "leader": false, "shard": "S1", "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "PREPARE(txn1: Alice -$100)", "epoch": 1 }] },
+        "S1.R3": { "epoch": 1, "leader": false, "shard": "S1", "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "PREPARE(txn1: Alice -$100)", "epoch": 1 }] },
+        "S2.R1": { "epoch": 1, "leader": true, "shard": "S2", "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "PREPARE(txn1: Ned +$100)", "epoch": 1 }] },
+        "S2.R2": { "epoch": 1, "leader": false, "shard": "S2", "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "PREPARE(txn1: Ned +$100)", "epoch": 1 }] },
+        "S2.R3": { "epoch": 1, "leader": false, "shard": "S2", "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "PREPARE(txn1: Ned +$100)", "epoch": 1 }] }
+      },
+      "controlPlane": {
+        "shardMap": [
+          { "shard": "S1", "configEpoch": 1, "replicas": ["S1.R1", "S1.R2", "S1.R3"] },
+          { "shard": "S2", "configEpoch": 1, "replicas": ["S2.R1", "S2.R2", "S2.R3"] }
+        ],
+        "currentConfigEpoch": 1
+      },
+      "messages": [
+        { "from": "S1.R1", "to": "S2.R1", "label": "prepare(txn1: Ned +$100)", "type": "request" },
+        { "from": "S2.R1", "to": "S1.R1", "label": "vote-commit(txn1)", "type": "vote" }
+      ],
+      "certificates": [
+        { "type": "commit", "holder": "S1.R1", "epoch": 1, "shard": "S1", "detail": "S1 prepare committed within shard", "evidence": { "quorum": ["S1.R1", "S1.R2"], "boundary": "C", "from": 0, "to": 1 } },
+        { "type": "commit", "holder": "S2.R1", "epoch": 1, "shard": "S2", "detail": "S2 prepare committed within shard", "evidence": { "quorum": ["S2.R1", "S2.R2"], "boundary": "C", "from": 0, "to": 1 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "composition"
+    },
+    {
+      "id": 3,
+      "event": "Phase 2 (Commit): Coordinator decides COMMIT, both shards apply",
+      "narration": "Both shards voted to commit. S1.R1 logs the COMMIT decision and broadcasts to S2. Both shards apply: Alice loses $100, Ned gains $100. The transaction certificate proves atomicity.",
+      "replicas": {
+        "S1.R1": { "epoch": 1, "leader": true, "shard": "S1", "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "PREPARE(txn1: Alice -$100)", "epoch": 1 },
+          { "idx": 2, "val": "COMMIT(txn1)", "epoch": 1 }
+        ]},
+        "S1.R2": { "epoch": 1, "leader": false, "shard": "S1", "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "PREPARE(txn1: Alice -$100)", "epoch": 1 },
+          { "idx": 2, "val": "COMMIT(txn1)", "epoch": 1 }
+        ]},
+        "S1.R3": { "epoch": 1, "leader": false, "shard": "S1", "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "PREPARE(txn1: Alice -$100)", "epoch": 1 },
+          { "idx": 2, "val": "COMMIT(txn1)", "epoch": 1 }
+        ]},
+        "S2.R1": { "epoch": 1, "leader": true, "shard": "S2", "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "PREPARE(txn1: Ned +$100)", "epoch": 1 },
+          { "idx": 2, "val": "COMMIT(txn1)", "epoch": 1 }
+        ]},
+        "S2.R2": { "epoch": 1, "leader": false, "shard": "S2", "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "PREPARE(txn1: Ned +$100)", "epoch": 1 },
+          { "idx": 2, "val": "COMMIT(txn1)", "epoch": 1 }
+        ]},
+        "S2.R3": { "epoch": 1, "leader": false, "shard": "S2", "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "PREPARE(txn1: Ned +$100)", "epoch": 1 },
+          { "idx": 2, "val": "COMMIT(txn1)", "epoch": 1 }
+        ]}
+      },
+      "controlPlane": {
+        "shardMap": [
+          { "shard": "S1", "configEpoch": 1, "replicas": ["S1.R1", "S1.R2", "S1.R3"] },
+          { "shard": "S2", "configEpoch": 1, "replicas": ["S2.R1", "S2.R2", "S2.R3"] }
+        ],
+        "currentConfigEpoch": 1
+      },
+      "messages": [
+        { "from": "S1.R1", "to": "S2.R1", "label": "commit(txn1)", "type": "request" },
+        { "from": "S1.R1", "to": "Client", "label": "txn1 committed", "type": "ack" }
+      ],
+      "certificates": [
+        { "type": "transaction", "holder": "S1.R1", "epoch": 1, "detail": "Transaction cert: txn1 committed atomically across S1 and S2. Both shards voted commit.", "evidence": { "quorum": ["S1.R1", "S2.R1"], "boundary": "C", "from": 1, "to": 2 } }
+      ],
+      "observations": [
+        {
+          "type": "txnCommit",
+          "actor": "Client",
+          "opId": "txn1",
+          "result": "committed",
+          "consistency": "serializable",
+          "detail": "Cross-shard transaction: Alice -$100 (S1) and Ned +$100 (S2) committed atomically"
+        }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "composition"
+    },
+    {
+      "id": 4,
+      "event": "✅ Both shards consistent — transaction complete",
+      "narration": "The transaction is complete. Both shards have applied the changes. The transaction certificate proves that Alice's debit and Ned's credit are atomic: either both happened or neither did. This is the composition geometry in action — multiple consensus domains coordinated by transaction certificates.",
+      "replicas": {
+        "S1.R1": { "epoch": 1, "leader": true, "shard": "S1", "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "PREPARE(txn1: Alice -$100)", "epoch": 1 },
+          { "idx": 2, "val": "COMMIT(txn1)", "epoch": 1 }
+        ]},
+        "S1.R2": { "epoch": 1, "leader": false, "shard": "S1", "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "PREPARE(txn1: Alice -$100)", "epoch": 1 },
+          { "idx": 2, "val": "COMMIT(txn1)", "epoch": 1 }
+        ]},
+        "S1.R3": { "epoch": 1, "leader": false, "shard": "S1", "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "PREPARE(txn1: Alice -$100)", "epoch": 1 },
+          { "idx": 2, "val": "COMMIT(txn1)", "epoch": 1 }
+        ]},
+        "S2.R1": { "epoch": 1, "leader": true, "shard": "S2", "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "PREPARE(txn1: Ned +$100)", "epoch": 1 },
+          { "idx": 2, "val": "COMMIT(txn1)", "epoch": 1 }
+        ]},
+        "S2.R2": { "epoch": 1, "leader": false, "shard": "S2", "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "PREPARE(txn1: Ned +$100)", "epoch": 1 },
+          { "idx": 2, "val": "COMMIT(txn1)", "epoch": 1 }
+        ]},
+        "S2.R3": { "epoch": 1, "leader": false, "shard": "S2", "T": 0, "D": 2, "A": 2, "C": 2, "E": 2, "log": [
+          { "idx": 1, "val": "PREPARE(txn1: Ned +$100)", "epoch": 1 },
+          { "idx": 2, "val": "COMMIT(txn1)", "epoch": 1 }
+        ]}
+      },
+      "controlPlane": {
+        "shardMap": [
+          { "shard": "S1", "configEpoch": 1, "replicas": ["S1.R1", "S1.R2", "S1.R3"] },
+          { "shard": "S2", "configEpoch": 1, "replicas": ["S2.R1", "S2.R2", "S2.R3"] }
+        ],
+        "currentConfigEpoch": 1
+      },
+      "messages": [],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "ownership"
+    }
+  ]
+}

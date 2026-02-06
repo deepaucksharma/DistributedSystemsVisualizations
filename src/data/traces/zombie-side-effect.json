@@ -1,0 +1,184 @@
+{
+  "id": "zombie-side-effect",
+  "title": "Zombie Side Effect: Externalization Without Fencing",
+  "description": "An old leader sends an external side effect (payment), crashes, and after recovery re-sends it. Without externalization certificates, the side effect is duplicated — the zombie strikes.",
+  "spec": {
+    "type": "Linearizable Register with Side Effects",
+    "invariant": "Each committed entry's side effects execute exactly once",
+    "consistency_model": "linearizable",
+    "invariants": [
+      "Each committed entry's side effects execute exactly once",
+      "Externalization must be fenced by authority epoch"
+    ],
+    "observations": ["read", "write", "externalEffect"]
+  },
+  "environment": {
+    "fault_model": "crash-recovery",
+    "storage_model": "durable fsync",
+    "network_model": "async: omission, delay, reorder",
+    "timing_model": "asynchronous"
+  },
+  "consistencyModel": "linearizable",
+  "failureModel": "crash-recovery",
+  "historyShape": "line",
+  "geometries": ["composition", "authority", "failure"],
+  "framework_refs": ["§5.4 Composition Geometry", "§3.2 Externalization Certificate"],
+  "steps": [
+    {
+      "id": 0,
+      "event": "Initial state — 3 replicas, epoch 1, R1 is leader",
+      "narration": "Clean cluster. R1 is leader. The system processes operations that have external side effects (e.g., sending payments to a bank).",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 0, "A": 0, "C": 0, "E": 0, "log": [] }
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "authority", "holder": "R1", "epoch": 1, "detail": "R1 elected leader, epoch 1", "evidence": { "quorum": ["R1", "R2", "R3"] } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "authority"
+    },
+    {
+      "id": 1,
+      "event": "Client requests: 'Send $100 to Bank' — R1 appends and commits",
+      "narration": "R1 appends 'pay($100)' at idx=1, replicates to majority, and commits. C advances to 1. The operation is committed — its side effect (the payment) should execute exactly once.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }] }
+      },
+      "messages": [
+        { "from": "Client", "to": "R1", "label": "pay($100)", "type": "request" },
+        { "from": "R1", "to": "R2", "label": "append(pay($100), idx=1)", "type": "replication" },
+        { "from": "R1", "to": "R3", "label": "append(pay($100), idx=1)", "type": "replication" }
+      ],
+      "certificates": [
+        { "type": "commit", "holder": "R1", "epoch": 1, "detail": "Commit cert: idx=1, quorum={R1,R2,R3}", "evidence": { "quorum": ["R1", "R2", "R3"], "boundary": "C", "from": 0, "to": 1 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "safety"
+    },
+    {
+      "id": 2,
+      "event": "R1 sends payment to external bank — side effect executed",
+      "narration": "R1 applies the committed entry and sends $100 to the bank. The external system processes it. This is an externalization: a side effect that cannot be rolled back.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }] },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }] }
+      },
+      "messages": [
+        { "from": "R1", "to": "Bank", "label": "HTTP POST: pay $100 (no idempotency key!)", "type": "request" }
+      ],
+      "certificates": [],
+      "observations": [
+        {
+          "type": "externalEffect",
+          "actor": "R1",
+          "result": "payment sent",
+          "detail": "R1 sends $100 to bank — but without idempotency key or fencing token"
+        }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "composition"
+    },
+    {
+      "id": 3,
+      "event": "⚡ R1 crashes immediately after sending payment",
+      "narration": "R1 crashes after sending the payment but before recording that the side effect was executed. On recovery, R1 won't know whether the bank received the payment or not.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }], "crashed": true },
+        "R2": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }] },
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }] }
+      },
+      "messages": [],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "failure"
+    },
+    {
+      "id": 4,
+      "event": "R2 becomes leader (epoch 2), processes new operations",
+      "narration": "R2 wins election in epoch 2. It knows idx=1 is committed but doesn't know R1 already sent the payment. R2 might re-execute the side effect, or a recovering R1 might.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }], "crashed": true },
+        "R2": { "epoch": 2, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }] },
+        "R3": { "epoch": 2, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }] }
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "authority", "holder": "R2", "epoch": 2, "detail": "R2 elected leader, epoch 2", "evidence": { "quorum": ["R2", "R3"] } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "authority"
+    },
+    {
+      "id": 5,
+      "event": "🔴 R1 recovers, re-sends the payment — DUPLICATE!",
+      "narration": "R1 recovers. It sees idx=1 is committed and 'needs' to be externalized. Since R1 has no record that the payment was already sent, it re-sends $100 to the bank. The bank receives two payments — $200 total. This is the zombie side effect.",
+      "replicas": {
+        "R1": { "epoch": 2, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }], "recovered": true, "danger": true },
+        "R2": { "epoch": 2, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }] },
+        "R3": { "epoch": 2, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }] }
+      },
+      "messages": [
+        { "from": "R1", "to": "Bank", "label": "HTTP POST: pay $100 (DUPLICATE!)", "type": "request" }
+      ],
+      "certificates": [],
+      "observations": [
+        {
+          "type": "externalEffect",
+          "actor": "R1",
+          "result": "duplicate payment!",
+          "detail": "R1 re-sends $100 — bank now received $200 total. Zombie side effect!"
+        }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": false,
+      "violation": {
+        "type": "composition",
+        "law": "External effects must execute exactly once per committed entry",
+        "detail": "R1 re-sent payment after recovery because it had no externalization certificate recording that the side effect was already executed. The bank received $200 instead of $100.",
+        "framework_ref": "§5.4 Composition: externalization certificates",
+        "bug_class": "zombie_side_effect"
+      },
+      "geometry_highlight": "composition"
+    },
+    {
+      "id": 6,
+      "event": "✅ Fix: Externalization certificate with idempotency key",
+      "narration": "The correct approach: before sending a side effect, the leader records an externalization certificate in the log with an idempotency key (e.g., 'pay-idx1-e1'). The external system deduplicates using this key. On recovery, R1 either (a) sees the cert and skips, or (b) re-sends but the bank deduplicates via the key. Either way, exactly-once delivery.",
+      "replicas": {
+        "R1": { "epoch": 2, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }] },
+        "R2": { "epoch": 2, "leader": true, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }] },
+        "R3": { "epoch": 2, "leader": false, "T": 0, "D": 1, "A": 1, "C": 1, "E": 1, "log": [{ "idx": 1, "val": "pay($100)", "epoch": 1 }] }
+      },
+      "messages": [
+        { "from": "R1", "to": "Bank", "label": "HTTP POST: pay $100 (idempotency_key=pay-idx1-e1)", "type": "request" },
+        { "from": "Bank", "to": "R1", "label": "200 OK (deduplicated, already processed)", "type": "ack" }
+      ],
+      "certificates": [
+        { "type": "externalization", "holder": "R1", "epoch": 1, "detail": "Externalization cert: pay($100) at idx=1, idempotency_key=pay-idx1-e1. Bank deduplicates via key.", "evidence": { "quorum": ["R1"], "boundary": "A", "from": 0, "to": 1 } }
+      ],
+      "observations": [
+        {
+          "type": "externalEffect",
+          "actor": "R1",
+          "opId": "pay-idx1-e1",
+          "result": "deduplicated (already sent)",
+          "detail": "Bank received idempotent retry with key pay-idx1-e1. Exactly-once semantics preserved."
+        }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "composition"
+    }
+  ]
+}

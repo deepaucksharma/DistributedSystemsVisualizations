@@ -1,0 +1,219 @@
+{
+  "id": "snapshot-install",
+  "title": "Snapshot Install: Recovering from the Trim Cliff",
+  "description": "The correct fix for the trim cliff: create a snapshot at the trim frontier, send it to the lagging replica, and resume log replay from the snapshot point.",
+  "spec": {
+    "type": "Linearizable Register",
+    "invariant": "Single committed value per index",
+    "consistency_model": "linearizable",
+    "invariants": [
+      "Single committed value per index",
+      "Snapshot at T contains all effects ≤ T",
+      "After snapshot install, replica can resume from T"
+    ],
+    "observations": ["read", "write"]
+  },
+  "environment": {
+    "fault_model": "crash-recovery",
+    "storage_model": "durable fsync",
+    "network_model": "async: omission, delay, reorder",
+    "timing_model": "asynchronous"
+  },
+  "consistencyModel": "linearizable",
+  "failureModel": "crash-recovery",
+  "historyShape": "line",
+  "geometries": ["resource", "safety"],
+  "framework_refs": ["§4.4 Resource Geometry", "§2.5 Boundaries"],
+  "steps": [
+    {
+      "id": 0,
+      "event": "Starting state — R3 is behind the trim frontier",
+      "narration": "Same setup as trim-cliff: R1 and R2 have committed entries 1-7 and trimmed to T=5. R3 is at E=3, partitioned. Log replay from R1/R2 is impossible — entry 4 is gone.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1 },
+          { "idx": 2, "val": "B", "epoch": 1 },
+          { "idx": 3, "val": "C", "epoch": 1 }
+        ], "partitioned": true, "danger": true}
+      },
+      "messages": [],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "resource"
+    },
+    {
+      "id": 1,
+      "event": "R1 creates snapshot at position 5 (= T frontier)",
+      "narration": "Before trimming, R1 takes a snapshot that captures the state machine up to and including index 5. This snapshot encodes all effects of entries 1-5. It's the key to the resource geometry: snapshots make trimming safe.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1 },
+          { "idx": 2, "val": "B", "epoch": 1 },
+          { "idx": 3, "val": "C", "epoch": 1 }
+        ], "partitioned": true, "danger": true}
+      },
+      "messages": [],
+      "certificates": [
+        { "type": "trim", "holder": "R1", "epoch": 1, "detail": "Snapshot cert: state snapshot at idx=5 captures all effects of entries 1-5", "evidence": { "quorum": ["R1", "R2"], "boundary": "T", "from": 0, "to": 5 } }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "resource"
+    },
+    {
+      "id": 2,
+      "event": "R3 rejoins — requests catch-up from R1",
+      "narration": "R3 comes back online and requests catch-up. R1 detects that R3 needs idx ≥ 4, but R1's log starts at 5. Instead of NACK, R1 initiates a snapshot install.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "T": 0, "D": 3, "A": 3, "C": 3, "E": 3, "log": [
+          { "idx": 1, "val": "A", "epoch": 1 },
+          { "idx": 2, "val": "B", "epoch": 1 },
+          { "idx": 3, "val": "C", "epoch": 1 }
+        ]}
+      },
+      "messages": [
+        { "from": "R3", "to": "R1", "label": "catch-up request (need idx ≥ 4)", "type": "request" },
+        { "from": "R1", "to": "R3", "label": "snapshot-install (snapshot@5 + log 5-7)", "type": "snapshot" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "resource"
+    },
+    {
+      "id": 3,
+      "event": "R3 installs snapshot — state jumps to position 5",
+      "narration": "R3 loads the snapshot, replacing its state machine and log. T, D, A, C all jump to 5 — the snapshot point. R3's old log entries (1-3) are discarded; the snapshot encodes their cumulative effect.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "T": 5, "D": 5, "A": 5, "C": 5, "E": 5, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 }
+        ]}
+      },
+      "messages": [],
+      "certificates": [],
+      "boundaries_moved": [
+        { "replica": "R3", "boundary": "T", "from": 0, "to": 5 },
+        { "replica": "R3", "boundary": "D", "from": 3, "to": 5 },
+        { "replica": "R3", "boundary": "A", "from": 3, "to": 5 },
+        { "replica": "R3", "boundary": "C", "from": 3, "to": 5 },
+        { "replica": "R3", "boundary": "E", "from": 3, "to": 5 }
+      ],
+      "invariants_ok": true,
+      "geometry_highlight": "resource"
+    },
+    {
+      "id": 4,
+      "event": "R3 replays log entries 6-7 from leader",
+      "narration": "After snapshot install, R3 can resume normal log replay from idx=6 (the first entry after the snapshot). R1 sends entries 6 and 7. R3 applies them and is fully caught up.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]}
+      },
+      "messages": [
+        { "from": "R1", "to": "R3", "label": "append(F, idx=6, e=1)", "type": "replication" },
+        { "from": "R1", "to": "R3", "label": "append(G, idx=7, e=1)", "type": "replication" },
+        { "from": "R3", "to": "R1", "label": "ack(fsync, idx=7)", "type": "ack" }
+      ],
+      "certificates": [],
+      "boundaries_moved": [
+        { "replica": "R3", "boundary": "D", "from": 5, "to": 7 },
+        { "replica": "R3", "boundary": "A", "from": 5, "to": 7 },
+        { "replica": "R3", "boundary": "C", "from": 5, "to": 7 },
+        { "replica": "R3", "boundary": "E", "from": 5, "to": 7 }
+      ],
+      "invariants_ok": true,
+      "geometry_highlight": "safety"
+    },
+    {
+      "id": 5,
+      "event": "✅ R3 fully caught up — all replicas consistent",
+      "narration": "R3 is now at the same position as R1 and R2. All boundaries match. The snapshot install bridged the trim cliff. Key insight: trim certificates must only be issued when a snapshot exists at or beyond the trim point, ensuring recovery is always possible.",
+      "replicas": {
+        "R1": { "epoch": 1, "leader": true, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R2": { "epoch": 1, "leader": false, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]},
+        "R3": { "epoch": 1, "leader": false, "T": 5, "D": 7, "A": 7, "C": 7, "E": 7, "log": [
+          { "idx": 5, "val": "E", "epoch": 1 },
+          { "idx": 6, "val": "F", "epoch": 1 },
+          { "idx": 7, "val": "G", "epoch": 1 }
+        ]}
+      },
+      "messages": [],
+      "certificates": [],
+      "observations": [
+        {
+          "type": "clientRead",
+          "actor": "Client",
+          "targetReplica": "R3",
+          "result": "G (idx=7)",
+          "consistency": "linearizable",
+          "detail": "R3 serves linearizable read after snapshot install — fully caught up"
+        }
+      ],
+      "boundaries_moved": [],
+      "invariants_ok": true,
+      "geometry_highlight": "observation"
+    }
+  ]
+}
